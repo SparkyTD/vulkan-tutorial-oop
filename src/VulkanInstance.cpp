@@ -285,3 +285,13 @@ VulkanInstance::~VulkanInstance() {
     vkDestroyInstance(instance, nullptr);
     DestroyDebugUtilsMessengerEXT(instance, debugMessenger, nullptr);
 }
+
+uint32_t VulkanInstance::GetQueueFamilyIndex(QueueFamily queueFamily) {
+    QueueFamilyIndices queueFamilyIndices = FindQueueFamilies();
+    if(queueFamily == QueueFamily::Graphics)
+        return queueFamilyIndices.graphicsFamily.value();
+    if(queueFamily == QueueFamily::Present)
+        return queueFamilyIndices.presentFamily.value();
+
+    throw std::runtime_error("Queue type not supported");
+}

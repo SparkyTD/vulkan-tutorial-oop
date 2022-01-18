@@ -14,12 +14,16 @@ public:
 
     QueueFamilyIndices FindQueueFamilies(VkPhysicalDevice device);
 
+    uint32_t GetQueueFamilyIndex(QueueFamily queueFamily);
+
     SwapChainSupportDetails QuerySwapChainSupport(VkPhysicalDevice device);
 
     SwapChainSupportDetails QuerySwapChainSupport();
 
     VkInstance InstanceHandle();
+
     VkPhysicalDevice PhysicalDeviceHandle();
+
     VkSurfaceKHR SurfaceHandle();
 
 private:

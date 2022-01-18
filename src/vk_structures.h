@@ -72,3 +72,10 @@ namespace std {
         }
     };
 }
+
+enum class QueueFamily {
+    Graphics,
+    Present,
+    Compute,
+    Transfer
+};

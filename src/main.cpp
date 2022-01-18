@@ -34,6 +34,7 @@
 #include "VulkanRenderPass.h"
 #include "VulkanShader.h"
 #include "VulkanGraphicsPipeline.h"
+#include "VulkanCommandPool.h"
 
 const std::string MODEL_PATH = "models/viking_room.obj";
 const std::string TEXTURE_PATH = "textures/viking_room.png";
@@ -61,16 +62,10 @@ private:
     std::shared_ptr<VulkanSwapChain> swapChain;
     std::shared_ptr<VulkanRenderPass> renderPass;
     std::shared_ptr<VulkanGraphicsPipeline> graphicsPipeline;
+    std::shared_ptr<VulkanCommandPool> commandPool;
 
 
     std::vector<VkFramebuffer> swapChainFramebuffers;
-
-    // VkRenderPass renderPass;
-    // VkDescriptorSetLayout descriptorSetLayout;
-    // VkPipelineLayout pipelineLayout;
-    // VkPipeline graphicsPipeline;
-
-    VkCommandPool commandPool;
 
     VkImage colorImage;
     VkDeviceMemory colorImageMemory;
@@ -120,7 +115,8 @@ private:
         auto fragShaderModule = std::make_shared<VulkanShader>("shaders/frag.spv", device);
         graphicsPipeline = std::make_shared<VulkanGraphicsPipeline>(vertShaderModule, fragShaderModule, renderPass, device, swapChain);
 
-        createCommandPool();
+        commandPool = std::make_shared<VulkanCommandPool>(QueueFamily::Graphics, device, instance);
+
         createColorResources();
         createDepthResources();
         createFramebuffers();
@@ -206,18 +202,6 @@ private:
             if (vkCreateFramebuffer(device->Handle(), &framebufferInfo, nullptr, &swapChainFramebuffers[i]) != VK_SUCCESS) {
                 throw std::runtime_error("failed to create framebuffer!");
             }
-        }
-    }
-
-    void createCommandPool() {
-        QueueFamilyIndices queueFamilyIndices = instance->FindQueueFamilies();
-
-        VkCommandPoolCreateInfo poolInfo{};
-        poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
-        poolInfo.queueFamilyIndex = queueFamilyIndices.graphicsFamily.value();
-
-        if (vkCreateCommandPool(device->Handle(), &poolInfo, nullptr, &commandPool) != VK_SUCCESS) {
-            throw std::runtime_error("failed to create graphics command pool!");
         }
     }
 

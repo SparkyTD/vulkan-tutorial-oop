@@ -15,3 +15,7 @@ class VulkanRenderPass;
 class VulkanShader;
 
 class VulkanGraphicsPipeline;
+
+class VulkanCommandPool;
+
+class VulkanCommandBuffer;
