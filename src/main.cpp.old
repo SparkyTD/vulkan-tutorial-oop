@@ -1,0 +1,206 @@
+#include <iostream>
+#include <stdexcept>
+#include <algorithm>
+#include <vector>
+#include <cstdlib>
+#include <cstdint>
+#include "VulkanWindow.h"
+#include "VulkanInstance.h"
+#include "VulkanDevice.h"
+#include "VulkanSwapChain.h"
+#include "VulkanRenderPass.h"
+#include "VulkanGraphicsPipeline.h"
+#include "VulkanShader.h"
+#include "VulkanCommandPool.h"
+#include "VulkanFramebuffer.h"
+
+const int MAX_FRAMES_IN_FLIGHT = 2;
+
+class HelloTriangleApplication {
+public:
+    void run() {
+        window = std::make_shared<VulkanWindow>();
+        instance = std::make_shared<VulkanInstance>(window);
+
+        initVulkan();
+        mainLoop();
+    }
+
+private:
+    std::shared_ptr<VulkanWindow> window;
+    std::shared_ptr<VulkanInstance> instance;
+    std::shared_ptr<VulkanDevice> device;
+    std::shared_ptr<VulkanSwapChain> swapChain;
+    std::shared_ptr<VulkanRenderPass> renderPass;
+    std::shared_ptr<VulkanShader> vertShaderModule;
+    std::shared_ptr<VulkanShader> fragShaderModule;
+    std::shared_ptr<VulkanGraphicsPipeline> renderPipeline;
+    std::shared_ptr<VulkanCommandPool> commandPool;
+
+    std::vector<std::shared_ptr<VulkanFramebuffer>> frameBuffers;
+
+private:
+    std::vector<VkCommandBuffer> commandBuffers;
+    std::vector<VkSemaphore> imageAvailableSemaphores;
+    std::vector<VkSemaphore> renderFinishedSemaphores;
+    std::vector<VkFence> inFlightFences;
+    std::vector<VkFence> imagesInFlight;
+    size_t currentFrame = 0;
+
+    void initVulkan() {
+        instance->PickPhysicalDevice();
+        device = std::make_shared<VulkanDevice>(instance);
+        swapChain = std::make_shared<VulkanSwapChain>(instance, device, window);
+        swapChain->CreateImageViews();
+        renderPass = std::make_shared<VulkanRenderPass>(device, swapChain);
+        vertShaderModule = std::make_shared<VulkanShader>("shaders/vert.spv", device);
+        fragShaderModule = std::make_shared<VulkanShader>("shaders/frag.spv", device);
+        renderPipeline = std::make_shared<VulkanGraphicsPipeline>(device, vertShaderModule, fragShaderModule, swapChain, renderPass);
+        fragShaderModule->Destroy();
+        vertShaderModule->Destroy();
+        commandPool = std::make_shared<VulkanCommandPool>(device, instance);
+        for (int i = 0; i < swapChain->GetImageCount(); i++)
+            frameBuffers.push_back(std::make_shared<VulkanFramebuffer>(i, device, swapChain, renderPass));
+
+        createCommandBuffers();
+        createSyncObjects();
+    }
+
+    void mainLoop() {
+        while (!window->ShouldClose()) {
+            window->Update();
+            drawFrame();
+        }
+    }
+
+    void createCommandBuffers() {
+        commandBuffers.resize(swapChain->GetImageCount());
+
+        VkCommandBufferAllocateInfo allocInfo{};
+        allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+        allocInfo.commandPool = commandPool->Handle();
+        allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+        allocInfo.commandBufferCount = (uint32_t) commandBuffers.size();
+
+        if (vkAllocateCommandBuffers(device->Handle(), &allocInfo, commandBuffers.data()) != VK_SUCCESS) {
+            throw std::runtime_error("failed to allocate command buffers!");
+        }
+
+        for (size_t i = 0; i < commandBuffers.size(); i++) {
+            VkCommandBufferBeginInfo beginInfo{};
+            beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+
+            if (vkBeginCommandBuffer(commandBuffers[i], &beginInfo) != VK_SUCCESS) {
+                throw std::runtime_error("failed to begin recording command buffer!");
+            }
+
+            VkRenderPassBeginInfo renderPassInfo{};
+            renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+            renderPassInfo.renderPass = renderPass->Handle();
+            renderPassInfo.framebuffer = frameBuffers[i]->Handle();
+            renderPassInfo.renderArea.offset = {0, 0};
+            renderPassInfo.renderArea.extent = swapChain->GetExtent();
+
+            VkClearValue clearColor = {{{0.0f, 0.0f, 0.0f, 1.0f}}};
+            renderPassInfo.clearValueCount = 1;
+            renderPassInfo.pClearValues = &clearColor;
+
+            vkCmdBeginRenderPass(commandBuffers[i], &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+
+            vkCmdBindPipeline(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, renderPipeline->Handle());
+
+            vkCmdDraw(commandBuffers[i], 3, 1, 0, 0);
+
+            vkCmdEndRenderPass(commandBuffers[i]);
+
+            if (vkEndCommandBuffer(commandBuffers[i]) != VK_SUCCESS) {
+                throw std::runtime_error("failed to record command buffer!");
+            }
+        }
+    }
+
+    void createSyncObjects() {
+        imageAvailableSemaphores.resize(MAX_FRAMES_IN_FLIGHT);
+        renderFinishedSemaphores.resize(MAX_FRAMES_IN_FLIGHT);
+        inFlightFences.resize(MAX_FRAMES_IN_FLIGHT);
+        imagesInFlight.resize(swapChain->GetImageCount(), VK_NULL_HANDLE);
+
+        VkSemaphoreCreateInfo semaphoreInfo{};
+        semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+
+        VkFenceCreateInfo fenceInfo{};
+        fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+        fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
+
+        for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+            if (vkCreateSemaphore(device->Handle(), &semaphoreInfo, nullptr, &imageAvailableSemaphores[i]) != VK_SUCCESS ||
+                vkCreateSemaphore(device->Handle(), &semaphoreInfo, nullptr, &renderFinishedSemaphores[i]) != VK_SUCCESS ||
+                vkCreateFence(device->Handle(), &fenceInfo, nullptr, &inFlightFences[i]) != VK_SUCCESS) {
+                throw std::runtime_error("failed to create synchronization objects for a frame!");
+            }
+        }
+    }
+
+    void drawFrame() {
+        vkWaitForFences(device->Handle(), 1, &inFlightFences[currentFrame], VK_TRUE, UINT64_MAX);
+
+        uint32_t imageIndex;
+        vkAcquireNextImageKHR(device->Handle(), swapChain->Handle(), UINT64_MAX, imageAvailableSemaphores[currentFrame], VK_NULL_HANDLE, &imageIndex);
+
+        if (imagesInFlight[imageIndex] != VK_NULL_HANDLE) {
+            vkWaitForFences(device->Handle(), 1, &imagesInFlight[imageIndex], VK_TRUE, UINT64_MAX);
+        }
+        imagesInFlight[imageIndex] = inFlightFences[currentFrame];
+
+        VkSubmitInfo submitInfo{};
+        submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+
+        VkSemaphore waitSemaphores[] = {imageAvailableSemaphores[currentFrame]};
+        VkPipelineStageFlags waitStages[] = {VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
+        submitInfo.waitSemaphoreCount = 1;
+        submitInfo.pWaitSemaphores = waitSemaphores;
+        submitInfo.pWaitDstStageMask = waitStages;
+
+        submitInfo.commandBufferCount = 1;
+        submitInfo.pCommandBuffers = &commandBuffers[imageIndex];
+
+        VkSemaphore signalSemaphores[] = {renderFinishedSemaphores[currentFrame]};
+        submitInfo.signalSemaphoreCount = 1;
+        submitInfo.pSignalSemaphores = signalSemaphores;
+
+        vkResetFences(device->Handle(), 1, &inFlightFences[currentFrame]);
+
+        if (vkQueueSubmit(device->GetGraphicsQueue(), 1, &submitInfo, inFlightFences[currentFrame]) != VK_SUCCESS) {
+            throw std::runtime_error("failed to submit draw command buffer!");
+        }
+
+        VkPresentInfoKHR presentInfo{};
+        presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
+
+        presentInfo.waitSemaphoreCount = 1;
+        presentInfo.pWaitSemaphores = signalSemaphores;
+
+        VkSwapchainKHR swapChains[] = {swapChain->Handle()};
+        presentInfo.swapchainCount = 1;
+        presentInfo.pSwapchains = swapChains;
+
+        presentInfo.pImageIndices = &imageIndex;
+
+        vkQueuePresentKHR(device->GetPresentQueue(), &presentInfo);
+
+        currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
+    }
+};
+
+int main() {
+    HelloTriangleApplication app;
+
+    try {
+        app.run();
+    } catch (const std::exception &e) {
+        std::cerr << e.what() << std::endl;
+        return EXIT_FAILURE;
+    }
+
+    return EXIT_SUCCESS;
+}
