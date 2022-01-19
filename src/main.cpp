@@ -37,22 +37,16 @@
 #include "VulkanCommandPool.h"
 #include "VulkanCommandBuffer.h"
 #include "VulkanImage.h"
+#include "VulkanImageView.h"
 
 const std::string MODEL_PATH = "models/viking_room.obj";
 const std::string TEXTURE_PATH = "textures/viking_room.png";
 
 const int MAX_FRAMES_IN_FLIGHT = 2;
 
-struct UniformBufferObject {
-    alignas(16) glm::mat4 model;
-    alignas(16) glm::mat4 view;
-    alignas(16) glm::mat4 proj;
-};
-
 class HelloTriangleApplication {
 public:
     void run() {
-        window = std::make_shared<VulkanWindow>();
         initVulkan();
         mainLoop();
     }
@@ -66,21 +60,28 @@ private:
     std::shared_ptr<VulkanGraphicsPipeline> graphicsPipeline;
     std::shared_ptr<VulkanCommandPool> commandPool;
 
-
     std::vector<VkFramebuffer> swapChainFramebuffers;
 
-    VkImage colorImage;
-    VkDeviceMemory colorImageMemory;
-    VkImageView colorImageView;
+    std::shared_ptr<VulkanImage> colorImage;
+    std::shared_ptr<VulkanImageView> colorImageView;
+    std::shared_ptr<VulkanImage> depthImage;
+    std::shared_ptr<VulkanImageView> depthImageView;
+    std::shared_ptr<VulkanImage> textureImage;
+    std::shared_ptr<VulkanImageView> textureImageView;
 
-    VkImage depthImage;
-    VkDeviceMemory depthImageMemory;
-    VkImageView depthImageView;
+    // VkImage colorImage;
+    // VkDeviceMemory colorImageMemory;
+    // VkImageView colorImageView;
+
+    // VkImage depthImage;
+    // VkDeviceMemory depthImageMemory;
+    // VkImageView depthImageView;
+
+    // VkImage textureImage;
+    // VkDeviceMemory textureImageMemory;
+    // VkImageView textureImageView;
 
     uint32_t mipLevels;
-    VkImage textureImage;
-    VkDeviceMemory textureImageMemory;
-    VkImageView textureImageView;
     VkSampler textureSampler;
 
     std::vector<Vertex> vertices;
@@ -105,18 +106,15 @@ private:
     size_t currentFrame = 0;
 
     void initVulkan() { // TODO
+        window = std::make_shared<VulkanWindow>();
         instance = std::make_shared<VulkanInstance>(window);
         device = std::make_shared<VulkanDevice>(instance);
         swapChain = std::make_shared<VulkanSwapChain>(window, device, instance);
-
-        createImageViews();
-
         renderPass = std::make_shared<VulkanRenderPass>(instance, device, swapChain);
 
         auto vertShaderModule = std::make_shared<VulkanShader>("shaders/vert.spv", device);
         auto fragShaderModule = std::make_shared<VulkanShader>("shaders/frag.spv", device);
         graphicsPipeline = std::make_shared<VulkanGraphicsPipeline>(vertShaderModule, fragShaderModule, renderPass, device, swapChain);
-
         commandPool = std::make_shared<VulkanCommandPool>(QueueFamily::Graphics, device, instance);
 
         createColorResources();
@@ -154,9 +152,6 @@ private:
 
         device->WaitIdle();
         swapChain = std::make_shared<VulkanSwapChain>(window, device, instance);
-
-
-        createImageViews();
         renderPass = std::make_shared<VulkanRenderPass>(instance, device, swapChain);
 
         auto vertShaderModule = std::make_shared<VulkanShader>("shaders/vert.spv", device);
@@ -166,6 +161,7 @@ private:
         createColorResources();
         createDepthResources();
         createFramebuffers();
+
         createUniformBuffers();
         createDescriptorPool();
         createDescriptorSets();
@@ -174,22 +170,14 @@ private:
         imagesInFlight.resize(swapChain->GetImageCount(), VK_NULL_HANDLE);
     }
 
-    void createImageViews() {
-        swapChain->GetImageViews().resize(swapChain->GetImageCount());
-
-        for (uint32_t i = 0; i < swapChain->GetImageCount(); i++) {
-            swapChain->GetImageView(i) = createImageView(swapChain->GetImage(i)->Handle(), swapChain->GetFormat(), VK_IMAGE_ASPECT_COLOR_BIT, 1);
-        }
-    }
-
     void createFramebuffers() {
         swapChainFramebuffers.resize(swapChain->GetImageCount());
 
         for (size_t i = 0; i < swapChain->GetImageCount(); i++) {
             std::array<VkImageView, 3> attachments = {
-                colorImageView,
-                depthImageView,
-                swapChain->GetImageView(i)
+                colorImageView->Handle(),
+                depthImageView->Handle(),
+                swapChain->GetImageView(i)->Handle()
             };
 
             VkFramebufferCreateInfo framebufferInfo{};
@@ -210,22 +198,18 @@ private:
     void createColorResources() {
         VkFormat colorFormat = swapChain->GetFormat();
 
-        createImage(swapChain->GetExtent().width, swapChain->GetExtent().height, 1, VulkanInstance::MsaaSamples, colorFormat, VK_IMAGE_TILING_OPTIMAL,
-                    VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, colorImage, colorImageMemory);
-        colorImageView = createImageView(colorImage, colorFormat, VK_IMAGE_ASPECT_COLOR_BIT, 1);
+        colorImage = std::make_shared<VulkanImage>(instance, device, swapChain->GetExtent().width, swapChain->GetExtent().height, 1, VulkanInstance::MsaaSamples, colorFormat,
+                                                   VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+                                                   VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+        colorImageView = colorImage->GetView(colorFormat, VK_IMAGE_ASPECT_COLOR_BIT, 1);
     }
 
     void createDepthResources() {
         VkFormat depthFormat = renderPass->FindDepthFormat();
 
-        createImage(swapChain->GetExtent().width, swapChain->GetExtent().height, 1, VulkanInstance::MsaaSamples, depthFormat, VK_IMAGE_TILING_OPTIMAL,
-                    VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
-                    VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, depthImage, depthImageMemory);
-        depthImageView = createImageView(depthImage, depthFormat, VK_IMAGE_ASPECT_DEPTH_BIT, 1);
-    }
-
-    bool hasStencilComponent(VkFormat format) {
-        return format == VK_FORMAT_D32_SFLOAT_S8_UINT || format == VK_FORMAT_D24_UNORM_S8_UINT;
+        depthImage = std::make_shared<VulkanImage>(instance, device, swapChain->GetExtent().width, swapChain->GetExtent().height, 1, VulkanInstance::MsaaSamples, depthFormat,
+                                                   VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+        depthImageView = depthImage->GetView(depthFormat, VK_IMAGE_ASPECT_DEPTH_BIT, 1);
     }
 
     void createTextureImage() {
@@ -249,18 +233,18 @@ private:
 
         stbi_image_free(pixels);
 
-        createImage(texWidth, texHeight, mipLevels, VK_SAMPLE_COUNT_1_BIT, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_TILING_OPTIMAL,
-                    VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, textureImage,
-                    textureImageMemory);
+        textureImage = std::make_shared<VulkanImage>(instance, device, texWidth, texHeight, mipLevels, VK_SAMPLE_COUNT_1_BIT, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_TILING_OPTIMAL,
+                                                     VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                                                     VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 
-        transitionImageLayout(textureImage, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, mipLevels);
-        copyBufferToImage(stagingBuffer, textureImage, static_cast<uint32_t>(texWidth), static_cast<uint32_t>(texHeight));
+        transitionImageLayout(textureImage->Handle(), VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, mipLevels);
+        copyBufferToImage(stagingBuffer, textureImage->Handle(), static_cast<uint32_t>(texWidth), static_cast<uint32_t>(texHeight));
         //transitioned to VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL while generating mipmaps
 
         vkDestroyBuffer(device->Handle(), stagingBuffer, nullptr);
         vkFreeMemory(device->Handle(), stagingBufferMemory, nullptr);
 
-        generateMipmaps(textureImage, VK_FORMAT_R8G8B8A8_SRGB, texWidth, texHeight, mipLevels);
+        generateMipmaps(textureImage->Handle(), VK_FORMAT_R8G8B8A8_SRGB, texWidth, texHeight, mipLevels);
     }
 
     void generateMipmaps(VkImage image, VkFormat imageFormat, int32_t texWidth, int32_t texHeight, uint32_t mipLevels) {
@@ -351,7 +335,7 @@ private:
     }
 
     void createTextureImageView() {
-        textureImageView = createImageView(textureImage, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_ASPECT_COLOR_BIT, mipLevels);
+        textureImageView = textureImage->GetView(VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_ASPECT_COLOR_BIT, mipLevels);
     }
 
     void createTextureSampler() {
@@ -399,42 +383,6 @@ private:
         }
 
         return imageView;
-    }
-
-    void createImage(uint32_t width, uint32_t height, uint32_t mipLevels, VkSampleCountFlagBits numSamples, VkFormat format, VkImageTiling tiling, VkImageUsageFlags usage,
-                     VkMemoryPropertyFlags properties, VkImage &image, VkDeviceMemory &imageMemory) {
-        VkImageCreateInfo imageInfo{};
-        imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-        imageInfo.imageType = VK_IMAGE_TYPE_2D;
-        imageInfo.extent.width = width;
-        imageInfo.extent.height = height;
-        imageInfo.extent.depth = 1;
-        imageInfo.mipLevels = mipLevels;
-        imageInfo.arrayLayers = 1;
-        imageInfo.format = format;
-        imageInfo.tiling = tiling;
-        imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-        imageInfo.usage = usage;
-        imageInfo.samples = numSamples;
-        imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-
-        if (vkCreateImage(device->Handle(), &imageInfo, nullptr, &image) != VK_SUCCESS) {
-            throw std::runtime_error("failed to create image!");
-        }
-
-        VkMemoryRequirements memRequirements;
-        vkGetImageMemoryRequirements(device->Handle(), image, &memRequirements);
-
-        VkMemoryAllocateInfo allocInfo{};
-        allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-        allocInfo.allocationSize = memRequirements.size;
-        allocInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, properties);
-
-        if (vkAllocateMemory(device->Handle(), &allocInfo, nullptr, &imageMemory) != VK_SUCCESS) {
-            throw std::runtime_error("failed to allocate image memory!");
-        }
-
-        vkBindImageMemory(device->Handle(), image, imageMemory, 0);
     }
 
     void transitionImageLayout(VkImage image, VkFormat format, VkImageLayout oldLayout, VkImageLayout newLayout, uint32_t mipLevels) {
@@ -637,7 +585,7 @@ private:
 
             VkDescriptorImageInfo imageInfo{};
             imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-            imageInfo.imageView = textureImageView;
+            imageInfo.imageView = textureImageView->Handle();
             imageInfo.sampler = textureSampler;
 
             std::array<VkWriteDescriptorSet, 2> descriptorWrites{};
@@ -679,7 +627,7 @@ private:
         VkMemoryAllocateInfo allocInfo{};
         allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
         allocInfo.allocationSize = memRequirements.size;
-        allocInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, properties);
+        allocInfo.memoryTypeIndex = VulkanImage::FindMemoryType(instance, memRequirements.memoryTypeBits, properties);
 
         if (vkAllocateMemory(device->Handle(), &allocInfo, nullptr, &bufferMemory) != VK_SUCCESS) {
             throw std::runtime_error("failed to allocate buffer memory!");
@@ -696,19 +644,6 @@ private:
         vkCmdCopyBuffer(commandBuffer->Handle(), srcBuffer, dstBuffer, 1, &copyRegion);
 
         commandBuffer->EndAndSubmit();
-    }
-
-    uint32_t findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties) {
-        VkPhysicalDeviceMemoryProperties memProperties;
-        vkGetPhysicalDeviceMemoryProperties(instance->PhysicalDeviceHandle(), &memProperties);
-
-        for (uint32_t i = 0; i < memProperties.memoryTypeCount; i++) {
-            if ((typeFilter & (1 << i)) && (memProperties.memoryTypes[i].propertyFlags & properties) == properties) {
-                return i;
-            }
-        }
-
-        throw std::runtime_error("failed to find suitable memory type!");
     }
 
     void createCommandBuffers() {

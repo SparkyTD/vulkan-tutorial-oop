@@ -10,15 +10,13 @@ public:
 
     ~VulkanSwapChain();
 
-    void Reset();
-
     std::vector<std::shared_ptr<VulkanImage>>& GetImages();
 
-    std::vector<VkImageView>& GetImageViews();
+    std::vector<std::shared_ptr<VulkanImageView>>& GetImageViews();
 
     std::shared_ptr<VulkanImage> GetImage(int index);
 
-    VkImageView &GetImageView(int index);
+    std::shared_ptr<VulkanImageView> GetImageView(int index);
 
     int GetImageCount();
 
@@ -41,7 +39,7 @@ private:
     std::shared_ptr<VulkanWindow> window;
 
 private:
-    std::vector<VkImageView> swapChainImageViews;
+    std::vector<std::shared_ptr<VulkanImageView>> imageViews;
     std::vector<std::shared_ptr<VulkanImage>> images;
     VkFormat swapChainImageFormat;
     VkExtent2D swapChainExtent;

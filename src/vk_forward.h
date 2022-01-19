@@ -21,3 +21,5 @@ class VulkanCommandPool;
 class VulkanCommandBuffer;
 
 class VulkanImage;
+
+class VulkanImageView;

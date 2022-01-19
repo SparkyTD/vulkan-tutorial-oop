@@ -6,6 +6,7 @@
 #include "VulkanInstance.h"
 #include "VulkanWindow.h"
 #include "VulkanImage.h"
+#include "VulkanImageView.h"
 
 VulkanSwapChain::VulkanSwapChain(std::shared_ptr<VulkanWindow> window_, std::shared_ptr<VulkanDevice> device_, std::shared_ptr<VulkanInstance> instance_)
     : window(window_), device(device_), instance(instance_) {
@@ -51,12 +52,15 @@ VulkanSwapChain::VulkanSwapChain(std::shared_ptr<VulkanWindow> window_, std::sha
         throw std::runtime_error("failed to create swap chain!");
     }
 
-    auto imageHandles = VkEnumerateVector(device->Handle(), swapChain, vkGetSwapchainImagesKHR);
-    for (const auto &handle: imageHandles)
-        images.push_back(std::make_shared<VulkanImage>(handle));
-
     swapChainImageFormat = surfaceFormat.format;
     swapChainExtent = extent;
+
+    auto imageHandles = VkEnumerateVector(device->Handle(), swapChain, vkGetSwapchainImagesKHR);
+    for (const auto &handle: imageHandles) {
+        auto image = std::make_shared<VulkanImage>(handle, device);
+        images.push_back(image);
+        imageViews.push_back(image->GetView(swapChainImageFormat, VK_IMAGE_ASPECT_COLOR_BIT, 1));
+    }
 }
 
 VkSurfaceFormatKHR VulkanSwapChain::ChooseSwapSurfaceFormat(const std::vector<VkSurfaceFormatKHR> &availableFormats) {
@@ -98,20 +102,12 @@ VkExtent2D VulkanSwapChain::ChooseSwapExtent(const VkSurfaceCapabilitiesKHR &cap
     }
 }
 
-void VulkanSwapChain::Reset() {
-    for (auto imageView: swapChainImageViews) {
-        vkDestroyImageView(device->Handle(), imageView, nullptr);
-    }
-
-    vkDestroySwapchainKHR(device->Handle(), swapChain, nullptr);
-}
-
 std::vector<std::shared_ptr<VulkanImage>> &VulkanSwapChain::GetImages() {
     return images;
 }
 
-std::vector<VkImageView> &VulkanSwapChain::GetImageViews() {
-    return swapChainImageViews;
+std::vector<std::shared_ptr<VulkanImageView>> &VulkanSwapChain::GetImageViews() {
+    return imageViews;
 }
 
 int VulkanSwapChain::GetImageCount() {
@@ -126,8 +122,8 @@ std::shared_ptr<VulkanImage> VulkanSwapChain::GetImage(int index) {
     return images[index];
 }
 
-VkImageView &VulkanSwapChain::GetImageView(int index) {
-    return swapChainImageViews[index];
+std::shared_ptr<VulkanImageView> VulkanSwapChain::GetImageView(int index) {
+    return imageViews[index];
 }
 
 VkFormat VulkanSwapChain::GetFormat() {
@@ -135,9 +131,9 @@ VkFormat VulkanSwapChain::GetFormat() {
 }
 
 void VulkanSwapChain::CreateImageViews() {
-    // swapChainImageViews.resize(images.size());
+    // imageViews.resize(images.size());
     // for (int i = 0; i < images.size(); i++)
-    //     swapChainImageViews[i] = createImageView(images[i], swapChainImageFormat, VK_IMAGE_ASPECT_COLOR_BIT, 1);
+    //     imageViews[i] = createImageView(images[i], swapChainImageFormat, VK_IMAGE_ASPECT_COLOR_BIT, 1);
 }
 
 VulkanSwapChain::~VulkanSwapChain() {
