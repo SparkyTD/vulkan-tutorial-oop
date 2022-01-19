@@ -26,4 +26,6 @@ std::shared_ptr<VulkanCommandBuffer> VulkanCommandPool::AllocateBuffer() {
     if (vkAllocateCommandBuffers(device->Handle(), &allocInfo, &commandBufferHandle) != VK_SUCCESS) {
         throw std::runtime_error("failed to allocate command buffers!");
     }
+
+    return std::make_shared<VulkanCommandBuffer>(commandBufferHandle, device, this->shared_from_this());
 }

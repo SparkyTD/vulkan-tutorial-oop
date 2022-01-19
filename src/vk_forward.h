@@ -19,3 +19,5 @@ class VulkanGraphicsPipeline;
 class VulkanCommandPool;
 
 class VulkanCommandBuffer;
+
+class VulkanImage;

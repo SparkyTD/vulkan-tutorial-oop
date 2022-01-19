@@ -12,11 +12,11 @@ public:
 
     void Reset();
 
-    std::vector<VkImage>& GetImages();
+    std::vector<std::shared_ptr<VulkanImage>>& GetImages();
 
     std::vector<VkImageView>& GetImageViews();
 
-    VkImage GetImage(int index);
+    std::shared_ptr<VulkanImage> GetImage(int index);
 
     VkImageView &GetImageView(int index);
 
@@ -25,6 +25,8 @@ public:
     VkExtent2D GetExtent();
 
     VkFormat GetFormat();
+
+    void CreateImageViews();
 
 private:
     VkSurfaceFormatKHR ChooseSwapSurfaceFormat(const std::vector<VkSurfaceFormatKHR> &availableFormats);
@@ -40,7 +42,7 @@ private:
 
 private:
     std::vector<VkImageView> swapChainImageViews;
-    std::vector<VkImage> swapChainImages;
+    std::vector<std::shared_ptr<VulkanImage>> images;
     VkFormat swapChainImageFormat;
     VkExtent2D swapChainExtent;
 

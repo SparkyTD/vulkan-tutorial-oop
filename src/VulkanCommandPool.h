@@ -2,7 +2,7 @@
 
 #include "vk_common.h"
 
-class VulkanCommandPool {
+class VulkanCommandPool : public std::enable_shared_from_this<VulkanCommandPool> {
     VK_NON_COPIABLE(VulkanCommandPool)
 
 public:
