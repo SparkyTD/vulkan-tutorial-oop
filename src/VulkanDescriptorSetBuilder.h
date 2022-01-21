@@ -18,10 +18,15 @@ public:
 
     std::vector<std::shared_ptr<VulkanDescriptorSet>> Build();
 
+    VkDescriptorSetLayout GetLayout();
+
+
+
 private:
     std::shared_ptr<VulkanDevice> device;
-
     std::vector<VkDescriptorSetLayoutBinding> layoutBindings;
     std::vector<VkDescriptorPoolSize> poolSizes;
     int swapChainCount = -1;
+
+    VkDescriptorSetLayout descriptorSetLayout;
 };

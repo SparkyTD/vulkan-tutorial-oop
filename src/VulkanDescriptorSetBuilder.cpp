@@ -27,13 +27,16 @@ void VulkanDescriptorSetBuilder::AddLayoutSlot(ShaderStage shaderStage, int slot
 }
 
 std::vector<std::shared_ptr<VulkanDescriptorSet>> VulkanDescriptorSetBuilder::Build() {
+    if (layoutBindings.empty()) {
+        throw std::runtime_error("no layout slots have been added to this VulkanDescriptorSetBuilder");
+    }
+
     // Descriptor Set Layout
     VkDescriptorSetLayoutCreateInfo layoutInfo{};
     layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
     layoutInfo.bindingCount = static_cast<uint32_t>(layoutBindings.size());
     layoutInfo.pBindings = layoutBindings.data();
 
-    VkDescriptorSetLayout descriptorSetLayout;
     if (vkCreateDescriptorSetLayout(device->Handle(), &layoutInfo, nullptr, &descriptorSetLayout) != VK_SUCCESS) {
         throw std::runtime_error("failed to create descriptor set layout!");
     }
@@ -59,6 +62,7 @@ std::vector<std::shared_ptr<VulkanDescriptorSet>> VulkanDescriptorSetBuilder::Bu
     allocInfo.pSetLayouts = layouts.data();
 
     std::vector<VkDescriptorSet> descriptorSetHandles;
+    descriptorSetHandles.resize(swapChainCount);
     if (vkAllocateDescriptorSets(device->Handle(), &allocInfo, descriptorSetHandles.data()) != VK_SUCCESS) {
         throw std::runtime_error("failed to allocate descriptor sets!");
     }
@@ -67,4 +71,10 @@ std::vector<std::shared_ptr<VulkanDescriptorSet>> VulkanDescriptorSetBuilder::Bu
     for(int i = 0; i < swapChainCount; i++) {
         descriptorSets.push_back(std::make_shared<VulkanDescriptorSet>(device, descriptorSetHandles[i]));
     }
+
+    return descriptorSets;
+}
+
+VkDescriptorSetLayout VulkanDescriptorSetBuilder::GetLayout() {
+    return descriptorSetLayout;
 }

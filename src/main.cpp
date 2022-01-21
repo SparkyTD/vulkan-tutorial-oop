@@ -39,6 +39,7 @@
 #include "VulkanImage.h"
 #include "VulkanImageView.h"
 #include "VulkanBuffer.h"
+#include "VulkanDescriptorSetBuilder.h"
 
 const std::string MODEL_PATH = "models/viking_room.obj";
 const std::string TEXTURE_PATH = "textures/viking_room.png";
@@ -60,6 +61,7 @@ private:
     std::shared_ptr<VulkanRenderPass> renderPass;
     std::shared_ptr<VulkanGraphicsPipeline> graphicsPipeline;
     std::shared_ptr<VulkanCommandPool> commandPool;
+    std::shared_ptr<VulkanDescriptorSetBuilder> descriptorSetBuilder;
 
     std::vector<VkFramebuffer> swapChainFramebuffers;
 
@@ -96,9 +98,14 @@ private:
         swapChain = std::make_shared<VulkanSwapChain>(window, device, instance);
         renderPass = std::make_shared<VulkanRenderPass>(instance, device, swapChain);
 
+        descriptorSetBuilder = std::make_shared<VulkanDescriptorSetBuilder>(device, swapChain->GetImageCount());
+        descriptorSetBuilder->AddLayoutSlot(ShaderStage::Vertex, 0, ShaderResourceType::UniformBuffer, 1);
+        descriptorSetBuilder->AddLayoutSlot(ShaderStage::Fragment, 1, ShaderResourceType::ImageSampler, 1);
+        descriptorSetBuilder->Build();
+
         auto vertShaderModule = std::make_shared<VulkanShader>("shaders/vert.spv", device);
         auto fragShaderModule = std::make_shared<VulkanShader>("shaders/frag.spv", device);
-        graphicsPipeline = std::make_shared<VulkanGraphicsPipeline>(vertShaderModule, fragShaderModule, renderPass, device, swapChain);
+        graphicsPipeline = std::make_shared<VulkanGraphicsPipeline>(vertShaderModule, fragShaderModule, renderPass, device, swapChain, descriptorSetBuilder->GetLayout());
         commandPool = std::make_shared<VulkanCommandPool>(QueueFamily::Graphics, device, instance);
 
         createColorResources();
@@ -138,9 +145,14 @@ private:
         swapChain = std::make_shared<VulkanSwapChain>(window, device, instance);
         renderPass = std::make_shared<VulkanRenderPass>(instance, device, swapChain);
 
+        descriptorSetBuilder = std::make_shared<VulkanDescriptorSetBuilder>(device, swapChain->GetImageCount());
+        descriptorSetBuilder->AddLayoutSlot(ShaderStage::Vertex, 0, ShaderResourceType::UniformBuffer, 1);
+        descriptorSetBuilder->AddLayoutSlot(ShaderStage::Fragment, 1, ShaderResourceType::ImageSampler, 1);
+        descriptorSetBuilder->Build();
+
         auto vertShaderModule = std::make_shared<VulkanShader>("shaders/vert.spv", device);
         auto fragShaderModule = std::make_shared<VulkanShader>("shaders/frag.spv", device);
-        graphicsPipeline = std::make_shared<VulkanGraphicsPipeline>(vertShaderModule, fragShaderModule, renderPass, device, swapChain);
+        graphicsPipeline = std::make_shared<VulkanGraphicsPipeline>(vertShaderModule, fragShaderModule, renderPass, device, swapChain, descriptorSetBuilder->GetLayout());
 
         createColorResources();
         createDepthResources();
@@ -473,7 +485,7 @@ private:
 
     void createDescriptorSets() {
         // One for each Swap Image
-        std::vector<VkDescriptorSetLayout> layouts(swapChain->GetImageCount(), graphicsPipeline->GetDescriptorSetLayout());
+        std::vector<VkDescriptorSetLayout> layouts(swapChain->GetImageCount(), descriptorSetBuilder->GetLayout());
 
         VkDescriptorSetAllocateInfo allocInfo{};
         allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
@@ -657,8 +669,13 @@ private:
 
         vkResetFences(device->Handle(), 1, &inFlightFences[currentFrame]);
 
-        if (vkQueueSubmit(device->GetGraphicsQueue(), 1, &submitInfo, inFlightFences[currentFrame]) != VK_SUCCESS) {
-            throw std::runtime_error("failed to submit draw command buffer!");
+        result = vkQueueSubmit(device->GetGraphicsQueue(), 1, &submitInfo, inFlightFences[currentFrame]);
+        if (result != VK_SUCCESS) {
+            if(result == VK_ERROR_DEVICE_LOST) {
+                throw std::runtime_error("vkQueueSubmit(): VK_ERROR_DEVICE_LOST");
+            } else {
+                throw std::runtime_error("failed to submit draw command buffer!");
+            }
         }
 
         VkPresentInfoKHR presentInfo{};

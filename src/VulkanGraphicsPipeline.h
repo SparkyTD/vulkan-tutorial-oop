@@ -8,13 +8,10 @@ class VulkanGraphicsPipeline {
 public:
     VulkanGraphicsPipeline(std::shared_ptr<VulkanShader> vertexShader_, std::shared_ptr<VulkanShader> fragmentShader_,
                            std::shared_ptr<VulkanRenderPass> renderPass_, std::shared_ptr<VulkanDevice> device_,
-                           std::shared_ptr<VulkanSwapChain> swapChain_);
+                           std::shared_ptr<VulkanSwapChain> swapChain_, VkDescriptorSetLayout descriptorSetLayout);
 
     VkDescriptorSetLayout GetDescriptorSetLayout();
     VkPipelineLayout GetPipelineLayout();
-
-private:
-    void CreateDescriptorSetLayout();
 
 private:
     std::shared_ptr<VulkanDevice> device;
