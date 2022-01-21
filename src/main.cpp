@@ -40,6 +40,7 @@
 #include "VulkanImageView.h"
 #include "VulkanBuffer.h"
 #include "VulkanDescriptorSetBuilder.h"
+#include "VulkanDescriptorSet.h"
 
 const std::string MODEL_PATH = "models/viking_room.obj";
 const std::string TEXTURE_PATH = "textures/viking_room.png";
@@ -80,8 +81,8 @@ private:
 
     std::vector<std::shared_ptr<VulkanBuffer>> uniformBuffers;
 
-    VkDescriptorPool descriptorPool;
-    std::vector<VkDescriptorSet> descriptorSets;
+    // VkDescriptorPool descriptorPool;
+    std::vector<std::shared_ptr<VulkanDescriptorSet>> descriptorSets;
 
     std::vector<std::shared_ptr<VulkanCommandBuffer>> commandBuffers;
 
@@ -97,29 +98,32 @@ private:
         device = std::make_shared<VulkanDevice>(instance);
         swapChain = std::make_shared<VulkanSwapChain>(window, device, instance);
         renderPass = std::make_shared<VulkanRenderPass>(instance, device, swapChain);
+        commandPool = std::make_shared<VulkanCommandPool>(QueueFamily::Graphics, device, instance);
+
+        createUniformBuffers();
+        createTextureImage();
+        createTextureSampler();
 
         descriptorSetBuilder = std::make_shared<VulkanDescriptorSetBuilder>(device, swapChain->GetImageCount());
         descriptorSetBuilder->AddLayoutSlot(ShaderStage::Vertex, 0, ShaderResourceType::UniformBuffer, 1);
         descriptorSetBuilder->AddLayoutSlot(ShaderStage::Fragment, 1, ShaderResourceType::ImageSampler, 1);
-        descriptorSetBuilder->Build();
+        descriptorSets = descriptorSetBuilder->Build();
+        for(int i = 0; i < swapChain->GetImageCount(); i++) {
+            descriptorSets[i]->WriteUniformBuffer(0, uniformBuffers[i], sizeof(UniformBufferObject));
+            descriptorSets[i]->WriteImage(1, textureSampler, textureImage->GetView(VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_ASPECT_COLOR_BIT, mipLevels));
+        }
 
         auto vertShaderModule = std::make_shared<VulkanShader>("shaders/vert.spv", device);
         auto fragShaderModule = std::make_shared<VulkanShader>("shaders/frag.spv", device);
         graphicsPipeline = std::make_shared<VulkanGraphicsPipeline>(vertShaderModule, fragShaderModule, renderPass, device, swapChain, descriptorSetBuilder->GetLayout());
-        commandPool = std::make_shared<VulkanCommandPool>(QueueFamily::Graphics, device, instance);
 
         createColorResources();
         createDepthResources();
 
         createFramebuffers();
-        createTextureImage();
-        createTextureSampler();
         loadModel();
         createVertexBuffer();
         createIndexBuffer();
-        createUniformBuffers();
-        createDescriptorPool();
-        createDescriptorSets();
         createCommandBuffers();
         createSyncObjects();
     }
@@ -145,10 +149,16 @@ private:
         swapChain = std::make_shared<VulkanSwapChain>(window, device, instance);
         renderPass = std::make_shared<VulkanRenderPass>(instance, device, swapChain);
 
+        createUniformBuffers();
+
         descriptorSetBuilder = std::make_shared<VulkanDescriptorSetBuilder>(device, swapChain->GetImageCount());
         descriptorSetBuilder->AddLayoutSlot(ShaderStage::Vertex, 0, ShaderResourceType::UniformBuffer, 1);
         descriptorSetBuilder->AddLayoutSlot(ShaderStage::Fragment, 1, ShaderResourceType::ImageSampler, 1);
-        descriptorSetBuilder->Build();
+        descriptorSets = descriptorSetBuilder->Build();
+        for(int i = 0; i < swapChain->GetImageCount(); i++) {
+            descriptorSets[i]->WriteUniformBuffer(0, uniformBuffers[i], sizeof(UniformBufferObject));
+            descriptorSets[i]->WriteImage(1, textureSampler, textureImage->GetView(VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_ASPECT_COLOR_BIT, mipLevels));
+        }
 
         auto vertShaderModule = std::make_shared<VulkanShader>("shaders/vert.spv", device);
         auto fragShaderModule = std::make_shared<VulkanShader>("shaders/frag.spv", device);
@@ -158,9 +168,6 @@ private:
         createDepthResources();
         createFramebuffers();
 
-        createUniformBuffers();
-        createDescriptorPool();
-        createDescriptorSets();
         createCommandBuffers();
 
         imagesInFlight.resize(swapChain->GetImageCount(), VK_NULL_HANDLE);
@@ -459,79 +466,6 @@ private:
         }
     }
 
-    void createDescriptorPool() {
-        VkDescriptorPoolSize poolSizeUBO;
-        poolSizeUBO.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-        poolSizeUBO.descriptorCount = static_cast<uint32_t>(swapChain->GetImageCount()); // Max. two sets can be allocated
-
-        VkDescriptorPoolSize poolSizeImageSampler;
-        poolSizeImageSampler.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        poolSizeImageSampler.descriptorCount = static_cast<uint32_t>(swapChain->GetImageCount()); // Max. two sets can be allocated
-
-        std::vector<VkDescriptorPoolSize> poolSizes{poolSizeUBO, poolSizeImageSampler};
-
-        // Two Pools because there are two SwapChain images
-        VkDescriptorPoolCreateInfo poolInfo{};
-        poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-        poolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size()); // Two shader variables
-        poolInfo.pPoolSizes = poolSizes.data();
-        poolInfo.maxSets = static_cast<uint32_t>(swapChain->GetImageCount()); // Max. two sets can be allocated
-
-        // The Pool is created to support two types of attachments, each with max. two descriptors, one for each swap image
-        if (vkCreateDescriptorPool(device->Handle(), &poolInfo, nullptr, &descriptorPool) != VK_SUCCESS) {
-            throw std::runtime_error("failed to create descriptor pool!");
-        }
-    }
-
-    void createDescriptorSets() {
-        // One for each Swap Image
-        std::vector<VkDescriptorSetLayout> layouts(swapChain->GetImageCount(), descriptorSetBuilder->GetLayout());
-
-        VkDescriptorSetAllocateInfo allocInfo{};
-        allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-        allocInfo.descriptorPool = descriptorPool;
-        allocInfo.descriptorSetCount = layouts.size();
-        allocInfo.pSetLayouts = layouts.data();
-
-        descriptorSets.resize(swapChain->GetImageCount());
-        if (vkAllocateDescriptorSets(device->Handle(), &allocInfo, descriptorSets.data()) != VK_SUCCESS) {
-            throw std::runtime_error("failed to allocate descriptor sets!");
-        }
-
-        for (size_t i = 0; i < swapChain->GetImageCount(); i++) {
-            VkDescriptorBufferInfo uniformBufferInfo{};
-            uniformBufferInfo.buffer = uniformBuffers[i]->Handle();
-            uniformBufferInfo.offset = 0;
-            uniformBufferInfo.range = sizeof(UniformBufferObject);
-
-            VkDescriptorImageInfo textureImageInfo{};
-            textureImageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-            textureImageInfo.imageView = textureImage->GetView(VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_ASPECT_COLOR_BIT, mipLevels)->Handle();
-            textureImageInfo.sampler = textureSampler;
-
-            std::vector<VkWriteDescriptorSet> descriptorWrites{};
-            descriptorWrites.resize(2);
-
-            descriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            descriptorWrites[0].dstSet = descriptorSets[i];
-            descriptorWrites[0].dstBinding = 0;
-            descriptorWrites[0].dstArrayElement = 0;
-            descriptorWrites[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-            descriptorWrites[0].descriptorCount = 1;
-            descriptorWrites[0].pBufferInfo = &uniformBufferInfo;
-
-            descriptorWrites[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            descriptorWrites[1].dstSet = descriptorSets[i];
-            descriptorWrites[1].dstBinding = 1;
-            descriptorWrites[1].dstArrayElement = 0;
-            descriptorWrites[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-            descriptorWrites[1].descriptorCount = 1;
-            descriptorWrites[1].pImageInfo = &textureImageInfo;
-
-            vkUpdateDescriptorSets(device->Handle(), static_cast<uint32_t>(descriptorWrites.size()), descriptorWrites.data(), 0, nullptr);
-        }
-    }
-
     void createCommandBuffers() {
         commandBuffers.clear();
 
@@ -574,7 +508,8 @@ private:
                     vkCmdBindIndexBuffer(commandBuffers[i]->Handle(), indexBuffer->Handle(), 0, VK_INDEX_TYPE_UINT32);
 
                     // Bind the shader descriptor set (aka which resources belong to which shader layout slots)
-                    vkCmdBindDescriptorSets(commandBuffers[i]->Handle(), VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline->GetPipelineLayout(), 0, 1, &descriptorSets[i], 0,
+                    auto descriptorSet = descriptorSets[i]->Handle();
+                    vkCmdBindDescriptorSets(commandBuffers[i]->Handle(), VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline->GetPipelineLayout(), 0, 1, &descriptorSet, 0,
                                             nullptr);
 
                     // Main Draw command
