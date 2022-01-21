@@ -17,12 +17,15 @@ public:
 public:
     static uint32_t FindMemoryType(std::shared_ptr<VulkanInstance> instance, uint32_t typeFilter, VkMemoryPropertyFlags properties);
 
+    void ChangeLayout(std::shared_ptr<VulkanCommandBuffer> commandBuffer, VkImageLayout oldLayout, VkImageLayout newLayout, uint32_t mipLevels);
+
 private:
     std::shared_ptr<VulkanDevice> device;
 
     std::unordered_map<uint32_t, std::shared_ptr<VulkanImageView>> imageViewCache;
 
 private:
+    VkFormat format;
     VkDeviceMemory imageMemory;
 VK_HANDLE(VkImage, image);
 };

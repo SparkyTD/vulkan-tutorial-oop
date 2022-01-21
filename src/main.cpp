@@ -38,6 +38,7 @@
 #include "VulkanCommandBuffer.h"
 #include "VulkanImage.h"
 #include "VulkanImageView.h"
+#include "VulkanBuffer.h"
 
 const std::string MODEL_PATH = "models/viking_room.obj";
 const std::string TEXTURE_PATH = "textures/viking_room.png";
@@ -63,41 +64,24 @@ private:
     std::vector<VkFramebuffer> swapChainFramebuffers;
 
     std::shared_ptr<VulkanImage> colorImage;
-    std::shared_ptr<VulkanImageView> colorImageView;
     std::shared_ptr<VulkanImage> depthImage;
-    std::shared_ptr<VulkanImageView> depthImageView;
     std::shared_ptr<VulkanImage> textureImage;
-    std::shared_ptr<VulkanImageView> textureImageView;
-
-    // VkImage colorImage;
-    // VkDeviceMemory colorImageMemory;
-    // VkImageView colorImageView;
-
-    // VkImage depthImage;
-    // VkDeviceMemory depthImageMemory;
-    // VkImageView depthImageView;
-
-    // VkImage textureImage;
-    // VkDeviceMemory textureImageMemory;
-    // VkImageView textureImageView;
 
     uint32_t mipLevels;
     VkSampler textureSampler;
 
     std::vector<Vertex> vertices;
     std::vector<uint32_t> indices;
-    VkBuffer vertexBuffer;
-    VkDeviceMemory vertexBufferMemory;
-    VkBuffer indexBuffer;
-    VkDeviceMemory indexBufferMemory;
 
-    std::vector<VkBuffer> uniformBuffers;
-    std::vector<VkDeviceMemory> uniformBuffersMemory;
+    std::shared_ptr<VulkanBuffer> indexBuffer;
+    std::shared_ptr<VulkanBuffer> vertexBuffer;
+
+    std::vector<std::shared_ptr<VulkanBuffer>> uniformBuffers;
 
     VkDescriptorPool descriptorPool;
     std::vector<VkDescriptorSet> descriptorSets;
 
-    std::vector<VkCommandBuffer> commandBuffers;
+    std::vector<std::shared_ptr<VulkanCommandBuffer>> commandBuffers;
 
     std::vector<VkSemaphore> imageAvailableSemaphores;
     std::vector<VkSemaphore> renderFinishedSemaphores;
@@ -119,9 +103,9 @@ private:
 
         createColorResources();
         createDepthResources();
+
         createFramebuffers();
         createTextureImage();
-        createTextureImageView();
         createTextureSampler();
         loadModel();
         createVertexBuffer();
@@ -175,8 +159,8 @@ private:
 
         for (size_t i = 0; i < swapChain->GetImageCount(); i++) {
             std::array<VkImageView, 3> attachments = {
-                colorImageView->Handle(),
-                depthImageView->Handle(),
+                colorImage->GetView(swapChain->GetFormat(), VK_IMAGE_ASPECT_COLOR_BIT, 1)->Handle(),
+                depthImage->GetView(renderPass->FindDepthFormat(), VK_IMAGE_ASPECT_DEPTH_BIT, 1)->Handle(),
                 swapChain->GetImageView(i)->Handle()
             };
 
@@ -196,20 +180,15 @@ private:
     }
 
     void createColorResources() {
-        VkFormat colorFormat = swapChain->GetFormat();
-
-        colorImage = std::make_shared<VulkanImage>(instance, device, swapChain->GetExtent().width, swapChain->GetExtent().height, 1, VulkanInstance::MsaaSamples, colorFormat,
-                                                   VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+        colorImage = std::make_shared<VulkanImage>(instance, device, swapChain->GetExtent().width, swapChain->GetExtent().height, 1, VulkanInstance::MsaaSamples,
+                                                   swapChain->GetFormat(), VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
                                                    VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-        colorImageView = colorImage->GetView(colorFormat, VK_IMAGE_ASPECT_COLOR_BIT, 1);
     }
 
     void createDepthResources() {
-        VkFormat depthFormat = renderPass->FindDepthFormat();
-
-        depthImage = std::make_shared<VulkanImage>(instance, device, swapChain->GetExtent().width, swapChain->GetExtent().height, 1, VulkanInstance::MsaaSamples, depthFormat,
-                                                   VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-        depthImageView = depthImage->GetView(depthFormat, VK_IMAGE_ASPECT_DEPTH_BIT, 1);
+        depthImage = std::make_shared<VulkanImage>(instance, device, swapChain->GetExtent().width, swapChain->GetExtent().height, 1, VulkanInstance::MsaaSamples,
+                                                   renderPass->FindDepthFormat(), VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
+                                                   VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
     }
 
     void createTextureImage() {
@@ -222,14 +201,13 @@ private:
             throw std::runtime_error("failed to load texture image!");
         }
 
-        VkBuffer stagingBuffer;
-        VkDeviceMemory stagingBufferMemory;
-        createBuffer(imageSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, stagingBufferMemory);
+        auto stagingBuffer = std::make_shared<VulkanBuffer>(device, instance, imageSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                                                            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
 
         void *data;
-        vkMapMemory(device->Handle(), stagingBufferMemory, 0, imageSize, 0, &data);
+        vkMapMemory(device->Handle(), stagingBuffer->GetMemory(), 0, imageSize, 0, &data);
         memcpy(data, pixels, static_cast<size_t>(imageSize));
-        vkUnmapMemory(device->Handle(), stagingBufferMemory);
+        vkUnmapMemory(device->Handle(), stagingBuffer->GetMemory());
 
         stbi_image_free(pixels);
 
@@ -237,12 +215,14 @@ private:
                                                      VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
                                                      VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 
-        transitionImageLayout(textureImage->Handle(), VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, mipLevels);
-        copyBufferToImage(stagingBuffer, textureImage->Handle(), static_cast<uint32_t>(texWidth), static_cast<uint32_t>(texHeight));
+        auto commandBuffer = commandPool->AllocateBuffer()->Begin();
+        textureImage->ChangeLayout(commandBuffer, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, mipLevels);
+        commandBuffer->EndAndSubmit();
+
+        copyBufferToImage(stagingBuffer->Handle(), textureImage->Handle(), static_cast<uint32_t>(texWidth), static_cast<uint32_t>(texHeight));
         //transitioned to VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL while generating mipmaps
 
-        vkDestroyBuffer(device->Handle(), stagingBuffer, nullptr);
-        vkFreeMemory(device->Handle(), stagingBufferMemory, nullptr);
+
 
         generateMipmaps(textureImage->Handle(), VK_FORMAT_R8G8B8A8_SRGB, texWidth, texHeight, mipLevels);
     }
@@ -334,10 +314,6 @@ private:
         commandBuffer->EndAndSubmit();
     }
 
-    void createTextureImageView() {
-        textureImageView = textureImage->GetView(VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_ASPECT_COLOR_BIT, mipLevels);
-    }
-
     void createTextureSampler() {
         VkPhysicalDeviceProperties properties{};
         vkGetPhysicalDeviceProperties(instance->PhysicalDeviceHandle(), &properties);
@@ -363,73 +339,6 @@ private:
         if (vkCreateSampler(device->Handle(), &samplerInfo, nullptr, &textureSampler) != VK_SUCCESS) {
             throw std::runtime_error("failed to create texture sampler!");
         }
-    }
-
-    VkImageView createImageView(VkImage image, VkFormat format, VkImageAspectFlags aspectFlags, uint32_t mipLevels) {
-        VkImageViewCreateInfo viewInfo{};
-        viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-        viewInfo.image = image;
-        viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
-        viewInfo.format = format;
-        viewInfo.subresourceRange.aspectMask = aspectFlags;
-        viewInfo.subresourceRange.baseMipLevel = 0;
-        viewInfo.subresourceRange.levelCount = mipLevels;
-        viewInfo.subresourceRange.baseArrayLayer = 0;
-        viewInfo.subresourceRange.layerCount = 1;
-
-        VkImageView imageView;
-        if (vkCreateImageView(device->Handle(), &viewInfo, nullptr, &imageView) != VK_SUCCESS) {
-            throw std::runtime_error("failed to create texture image view!");
-        }
-
-        return imageView;
-    }
-
-    void transitionImageLayout(VkImage image, VkFormat format, VkImageLayout oldLayout, VkImageLayout newLayout, uint32_t mipLevels) {
-        auto commandBuffer = commandPool->AllocateBuffer()->Begin();
-
-        VkImageMemoryBarrier barrier{};
-        barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-        barrier.oldLayout = oldLayout;
-        barrier.newLayout = newLayout;
-        barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        barrier.image = image;
-        barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-        barrier.subresourceRange.baseMipLevel = 0;
-        barrier.subresourceRange.levelCount = mipLevels;
-        barrier.subresourceRange.baseArrayLayer = 0;
-        barrier.subresourceRange.layerCount = 1;
-
-        VkPipelineStageFlags sourceStage;
-        VkPipelineStageFlags destinationStage;
-
-        if (oldLayout == VK_IMAGE_LAYOUT_UNDEFINED && newLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL) {
-            barrier.srcAccessMask = 0;
-            barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-
-            sourceStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
-            destinationStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
-        } else if (oldLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL && newLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
-            barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-            barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-
-            sourceStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
-            destinationStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
-        } else {
-            throw std::invalid_argument("unsupported layout transition!");
-        }
-
-        vkCmdPipelineBarrier(
-            commandBuffer->Handle(),
-            sourceStage, destinationStage,
-            0,
-            0, nullptr,
-            0, nullptr,
-            1, &barrier
-        );
-
-        commandBuffer->EndAndSubmit();
     }
 
     void copyBufferToImage(VkBuffer buffer, VkImage image, uint32_t width, uint32_t height) {
@@ -497,79 +406,79 @@ private:
     void createVertexBuffer() {
         VkDeviceSize bufferSize = sizeof(vertices[0]) * vertices.size();
 
-        VkBuffer stagingBuffer;
-        VkDeviceMemory stagingBufferMemory;
-        createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, stagingBufferMemory);
+        auto stagingBuffer = std::make_shared<VulkanBuffer>(device, instance, bufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                                                            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
 
         void *data;
-        vkMapMemory(device->Handle(), stagingBufferMemory, 0, bufferSize, 0, &data);
+        vkMapMemory(device->Handle(), stagingBuffer->GetMemory(), 0, bufferSize, 0, &data);
         memcpy(data, vertices.data(), (size_t) bufferSize);
-        vkUnmapMemory(device->Handle(), stagingBufferMemory);
+        vkUnmapMemory(device->Handle(), stagingBuffer->GetMemory());
 
-        createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, vertexBuffer, vertexBufferMemory);
+        vertexBuffer = std::make_shared<VulkanBuffer>(device, instance, bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                                                      VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 
-        copyBuffer(stagingBuffer, vertexBuffer, bufferSize);
-
-        vkDestroyBuffer(device->Handle(), stagingBuffer, nullptr);
-        vkFreeMemory(device->Handle(), stagingBufferMemory, nullptr);
+        stagingBuffer->CopyTo(commandPool, vertexBuffer, bufferSize);
     }
 
     void createIndexBuffer() {
         VkDeviceSize bufferSize = sizeof(indices[0]) * indices.size();
 
-        VkBuffer stagingBuffer;
-        VkDeviceMemory stagingBufferMemory;
-        createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, stagingBufferMemory);
+        auto stagingBuffer = std::make_shared<VulkanBuffer>(device, instance, bufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                                                            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
 
         void *data;
-        vkMapMemory(device->Handle(), stagingBufferMemory, 0, bufferSize, 0, &data);
+        vkMapMemory(device->Handle(), stagingBuffer->GetMemory(), 0, bufferSize, 0, &data);
         memcpy(data, indices.data(), (size_t) bufferSize);
-        vkUnmapMemory(device->Handle(), stagingBufferMemory);
+        vkUnmapMemory(device->Handle(), stagingBuffer->GetMemory());
 
-        createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, indexBuffer, indexBufferMemory);
+        indexBuffer = std::make_shared<VulkanBuffer>(device, instance, bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+                                                     VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 
-        copyBuffer(stagingBuffer, indexBuffer, bufferSize);
-
-        vkDestroyBuffer(device->Handle(), stagingBuffer, nullptr);
-        vkFreeMemory(device->Handle(), stagingBufferMemory, nullptr);
+        stagingBuffer->CopyTo(commandPool, indexBuffer, bufferSize);
     }
 
     void createUniformBuffers() {
         VkDeviceSize bufferSize = sizeof(UniformBufferObject);
-
         uniformBuffers.resize(swapChain->GetImageCount());
-        uniformBuffersMemory.resize(swapChain->GetImageCount());
 
         for (size_t i = 0; i < swapChain->GetImageCount(); i++) {
-            createBuffer(bufferSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, uniformBuffers[i],
-                         uniformBuffersMemory[i]);
+            uniformBuffers[i] = std::make_shared<VulkanBuffer>(device, instance, bufferSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+                                                               VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
         }
     }
 
     void createDescriptorPool() {
-        std::array<VkDescriptorPoolSize, 2> poolSizes{};
-        poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-        poolSizes[0].descriptorCount = static_cast<uint32_t>(swapChain->GetImageCount());
-        poolSizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        poolSizes[1].descriptorCount = static_cast<uint32_t>(swapChain->GetImageCount());
+        VkDescriptorPoolSize poolSizeUBO;
+        poolSizeUBO.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        poolSizeUBO.descriptorCount = static_cast<uint32_t>(swapChain->GetImageCount()); // Max. two sets can be allocated
 
+        VkDescriptorPoolSize poolSizeImageSampler;
+        poolSizeImageSampler.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        poolSizeImageSampler.descriptorCount = static_cast<uint32_t>(swapChain->GetImageCount()); // Max. two sets can be allocated
+
+        std::vector<VkDescriptorPoolSize> poolSizes{poolSizeUBO, poolSizeImageSampler};
+
+        // Two Pools because there are two SwapChain images
         VkDescriptorPoolCreateInfo poolInfo{};
         poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-        poolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
+        poolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size()); // Two shader variables
         poolInfo.pPoolSizes = poolSizes.data();
-        poolInfo.maxSets = static_cast<uint32_t>(swapChain->GetImageCount());
+        poolInfo.maxSets = static_cast<uint32_t>(swapChain->GetImageCount()); // Max. two sets can be allocated
 
+        // The Pool is created to support two types of attachments, each with max. two descriptors, one for each swap image
         if (vkCreateDescriptorPool(device->Handle(), &poolInfo, nullptr, &descriptorPool) != VK_SUCCESS) {
             throw std::runtime_error("failed to create descriptor pool!");
         }
     }
 
     void createDescriptorSets() {
+        // One for each Swap Image
         std::vector<VkDescriptorSetLayout> layouts(swapChain->GetImageCount(), graphicsPipeline->GetDescriptorSetLayout());
+
         VkDescriptorSetAllocateInfo allocInfo{};
         allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
         allocInfo.descriptorPool = descriptorPool;
-        allocInfo.descriptorSetCount = static_cast<uint32_t>(swapChain->GetImageCount());
+        allocInfo.descriptorSetCount = layouts.size();
         allocInfo.pSetLayouts = layouts.data();
 
         descriptorSets.resize(swapChain->GetImageCount());
@@ -578,17 +487,18 @@ private:
         }
 
         for (size_t i = 0; i < swapChain->GetImageCount(); i++) {
-            VkDescriptorBufferInfo bufferInfo{};
-            bufferInfo.buffer = uniformBuffers[i];
-            bufferInfo.offset = 0;
-            bufferInfo.range = sizeof(UniformBufferObject);
+            VkDescriptorBufferInfo uniformBufferInfo{};
+            uniformBufferInfo.buffer = uniformBuffers[i]->Handle();
+            uniformBufferInfo.offset = 0;
+            uniformBufferInfo.range = sizeof(UniformBufferObject);
 
-            VkDescriptorImageInfo imageInfo{};
-            imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-            imageInfo.imageView = textureImageView->Handle();
-            imageInfo.sampler = textureSampler;
+            VkDescriptorImageInfo textureImageInfo{};
+            textureImageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            textureImageInfo.imageView = textureImage->GetView(VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_ASPECT_COLOR_BIT, mipLevels)->Handle();
+            textureImageInfo.sampler = textureSampler;
 
-            std::array<VkWriteDescriptorSet, 2> descriptorWrites{};
+            std::vector<VkWriteDescriptorSet> descriptorWrites{};
+            descriptorWrites.resize(2);
 
             descriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
             descriptorWrites[0].dstSet = descriptorSets[i];
@@ -596,7 +506,7 @@ private:
             descriptorWrites[0].dstArrayElement = 0;
             descriptorWrites[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
             descriptorWrites[0].descriptorCount = 1;
-            descriptorWrites[0].pBufferInfo = &bufferInfo;
+            descriptorWrites[0].pBufferInfo = &uniformBufferInfo;
 
             descriptorWrites[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
             descriptorWrites[1].dstSet = descriptorSets[i];
@@ -604,102 +514,64 @@ private:
             descriptorWrites[1].dstArrayElement = 0;
             descriptorWrites[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
             descriptorWrites[1].descriptorCount = 1;
-            descriptorWrites[1].pImageInfo = &imageInfo;
+            descriptorWrites[1].pImageInfo = &textureImageInfo;
 
             vkUpdateDescriptorSets(device->Handle(), static_cast<uint32_t>(descriptorWrites.size()), descriptorWrites.data(), 0, nullptr);
         }
     }
 
-    void createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, VkBuffer &buffer, VkDeviceMemory &bufferMemory) {
-        VkBufferCreateInfo bufferInfo{};
-        bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-        bufferInfo.size = size;
-        bufferInfo.usage = usage;
-        bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-
-        if (vkCreateBuffer(device->Handle(), &bufferInfo, nullptr, &buffer) != VK_SUCCESS) {
-            throw std::runtime_error("failed to create buffer!");
-        }
-
-        VkMemoryRequirements memRequirements;
-        vkGetBufferMemoryRequirements(device->Handle(), buffer, &memRequirements);
-
-        VkMemoryAllocateInfo allocInfo{};
-        allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-        allocInfo.allocationSize = memRequirements.size;
-        allocInfo.memoryTypeIndex = VulkanImage::FindMemoryType(instance, memRequirements.memoryTypeBits, properties);
-
-        if (vkAllocateMemory(device->Handle(), &allocInfo, nullptr, &bufferMemory) != VK_SUCCESS) {
-            throw std::runtime_error("failed to allocate buffer memory!");
-        }
-
-        vkBindBufferMemory(device->Handle(), buffer, bufferMemory, 0);
-    }
-
-    void copyBuffer(VkBuffer srcBuffer, VkBuffer dstBuffer, VkDeviceSize size) {
-        auto commandBuffer = commandPool->AllocateBuffer()->Begin();
-
-        VkBufferCopy copyRegion{};
-        copyRegion.size = size;
-        vkCmdCopyBuffer(commandBuffer->Handle(), srcBuffer, dstBuffer, 1, &copyRegion);
-
-        commandBuffer->EndAndSubmit();
-    }
-
     void createCommandBuffers() {
-        commandBuffers.resize(swapChainFramebuffers.size());
+        commandBuffers.clear();
 
-        VkCommandBufferAllocateInfo allocInfo{};
-        allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-        allocInfo.commandPool = commandPool->Handle();
-        allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-        allocInfo.commandBufferCount = (uint32_t) commandBuffers.size();
-
-        if (vkAllocateCommandBuffers(device->Handle(), &allocInfo, commandBuffers.data()) != VK_SUCCESS) {
-            throw std::runtime_error("failed to allocate command buffers!");
+        for (int i = 0; i < swapChainFramebuffers.size(); i++) {
+            commandBuffers.push_back(commandPool->AllocateBuffer());
         }
 
+        recordCommandBuffers();
+    }
+
+    void recordCommandBuffers() {
+        // Each Swap Chain image has its own cmd buffer, so the same list of instructions must be recorded for all of them (Why?)
         for (size_t i = 0; i < commandBuffers.size(); i++) {
-            VkCommandBufferBeginInfo beginInfo{};
-            beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+            commandBuffers[i]->Begin(); // Start recording into the command buffer corresponding to this swap-chain framebuffer
+            {
+                VkRenderPassBeginInfo renderPassInfo{};
+                renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+                renderPassInfo.renderPass = renderPass->Handle();
+                renderPassInfo.framebuffer = swapChainFramebuffers[i];
+                renderPassInfo.renderArea.offset = {0, 0};
+                renderPassInfo.renderArea.extent = swapChain->GetExtent();
 
-            if (vkBeginCommandBuffer(commandBuffers[i], &beginInfo) != VK_SUCCESS) {
-                throw std::runtime_error("failed to begin recording command buffer!");
+                // Configure how the screen will be cleared before the Render Pass begins
+                std::array<VkClearValue, 2> clearValues{};
+                clearValues[0].color = {{0.0f, 0.0f, 0.0f, 1.0f}};
+                clearValues[1].depthStencil = {1.0f, 0};
+                renderPassInfo.clearValueCount = static_cast<uint32_t>(clearValues.size());
+                renderPassInfo.pClearValues = clearValues.data();
+
+                // Begin the Render Pass for this specific mesh (Do I need a 2nd Pass if I want to render a second mesh ith different UBO?)
+                vkCmdBeginRenderPass(commandBuffers[i]->Handle(), &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+                {
+                    // Bind the Shader configuration (aka Pipeline)
+                    vkCmdBindPipeline(commandBuffers[i]->Handle(), VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline->Handle());
+
+                    // Bind the Mesh (vertexBuffer, indexBuffer)
+                    VkBuffer vertexBuffers[] = {vertexBuffer->Handle()};
+                    VkDeviceSize offsets[] = {0};
+                    vkCmdBindVertexBuffers(commandBuffers[i]->Handle(), 0, 1, vertexBuffers, offsets);
+                    vkCmdBindIndexBuffer(commandBuffers[i]->Handle(), indexBuffer->Handle(), 0, VK_INDEX_TYPE_UINT32);
+
+                    // Bind the shader descriptor set (aka which resources belong to which shader layout slots)
+                    vkCmdBindDescriptorSets(commandBuffers[i]->Handle(), VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline->GetPipelineLayout(), 0, 1, &descriptorSets[i], 0,
+                                            nullptr);
+
+                    // Main Draw command
+                    vkCmdDrawIndexed(commandBuffers[i]->Handle(), static_cast<uint32_t>(indices.size()), 1, 0, 0, 0);
+                }
+                vkCmdEndRenderPass(commandBuffers[i]->Handle());
             }
-
-            VkRenderPassBeginInfo renderPassInfo{};
-            renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-            renderPassInfo.renderPass = renderPass->Handle();
-            renderPassInfo.framebuffer = swapChainFramebuffers[i];
-            renderPassInfo.renderArea.offset = {0, 0};
-            renderPassInfo.renderArea.extent = swapChain->GetExtent();
-
-            std::array<VkClearValue, 2> clearValues{};
-            clearValues[0].color = {{0.0f, 0.0f, 0.0f, 1.0f}};
-            clearValues[1].depthStencil = {1.0f, 0};
-
-            renderPassInfo.clearValueCount = static_cast<uint32_t>(clearValues.size());
-            renderPassInfo.pClearValues = clearValues.data();
-
-            vkCmdBeginRenderPass(commandBuffers[i], &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
-
-            vkCmdBindPipeline(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline->Handle());
-
-            VkBuffer vertexBuffers[] = {vertexBuffer};
-            VkDeviceSize offsets[] = {0};
-            vkCmdBindVertexBuffers(commandBuffers[i], 0, 1, vertexBuffers, offsets);
-
-            vkCmdBindIndexBuffer(commandBuffers[i], indexBuffer, 0, VK_INDEX_TYPE_UINT32);
-
-            vkCmdBindDescriptorSets(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline->GetPipelineLayout(), 0, 1, &descriptorSets[i], 0, nullptr);
-
-            vkCmdDrawIndexed(commandBuffers[i], static_cast<uint32_t>(indices.size()), 1, 0, 0, 0);
-
-            vkCmdEndRenderPass(commandBuffers[i]);
-
-            if (vkEndCommandBuffer(commandBuffers[i]) != VK_SUCCESS) {
-                throw std::runtime_error("failed to record command buffer!");
-            }
+            // End the recording of this command buffer. Don't submit to GPU yet, just keep it as a "list of instructions" that the render loop will execute each frame
+            commandBuffers[i]->End();
         }
     }
 
@@ -738,12 +610,14 @@ private:
         ubo.proj[1][1] *= -1;
 
         void *data;
-        vkMapMemory(device->Handle(), uniformBuffersMemory[currentImage], 0, sizeof(ubo), 0, &data);
+        vkMapMemory(device->Handle(), uniformBuffers[currentImage]->GetMemory(), 0, sizeof(ubo), 0, &data);
         memcpy(data, &ubo, sizeof(ubo));
-        vkUnmapMemory(device->Handle(), uniformBuffersMemory[currentImage]);
+        vkUnmapMemory(device->Handle(), uniformBuffers[currentImage]->GetMemory());
     }
 
     void drawFrame() {
+        recordCommandBuffers();
+
         vkWaitForFences(device->Handle(), 1, &inFlightFences[currentFrame], VK_TRUE, UINT64_MAX);
 
         uint32_t imageIndex;
@@ -772,8 +646,10 @@ private:
         submitInfo.pWaitSemaphores = waitSemaphores;
         submitInfo.pWaitDstStageMask = waitStages;
 
+        auto commandBuffer = commandBuffers[imageIndex]->Handle();
+
         submitInfo.commandBufferCount = 1;
-        submitInfo.pCommandBuffers = &commandBuffers[imageIndex];
+        submitInfo.pCommandBuffers = &commandBuffer;
 
         VkSemaphore signalSemaphores[] = {renderFinishedSemaphores[currentFrame]};
         submitInfo.signalSemaphoreCount = 1;

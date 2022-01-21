@@ -14,8 +14,12 @@ std::shared_ptr<VulkanCommandBuffer> VulkanCommandBuffer::Begin() {
     return this->shared_from_this();
 }
 
-void VulkanCommandBuffer::EndAndSubmit() {
+void VulkanCommandBuffer::End() {
     vkEndCommandBuffer(commandBuffer);
+}
+
+void VulkanCommandBuffer::EndAndSubmit() {
+    End();
 
     VkSubmitInfo submitInfo{};
     submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;

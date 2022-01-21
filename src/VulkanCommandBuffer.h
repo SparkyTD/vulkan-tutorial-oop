@@ -13,6 +13,7 @@ public:
 
     std::shared_ptr<VulkanCommandBuffer> Begin();
 
+    void End();
     void EndAndSubmit();
 
 private:
