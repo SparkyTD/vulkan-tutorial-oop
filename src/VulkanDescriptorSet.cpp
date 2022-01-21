@@ -3,6 +3,8 @@
 #include "VulkanBuffer.h"
 #include "VulkanImageView.h"
 #include "VulkanTextureSampler.h"
+#include "VulkanCommandBuffer.h"
+#include "VulkanGraphicsPipeline.h"
 
 VulkanDescriptorSet::VulkanDescriptorSet(std::shared_ptr<VulkanDevice> device_, VkDescriptorSet descriptorSet_)
     : device(device_), descriptorSet(descriptorSet_) {
@@ -42,4 +44,8 @@ void VulkanDescriptorSet::WriteImage(int bindingIndex, std::shared_ptr<VulkanTex
     descriptorWrite.pImageInfo = &imageInfo;
 
     vkUpdateDescriptorSets(device->Handle(), 1, &descriptorWrite, 0, nullptr);
+}
+
+void VulkanDescriptorSet::Bind(std::shared_ptr<VulkanCommandBuffer> commandBuffer, std::shared_ptr<VulkanGraphicsPipeline> pipeline) {
+    vkCmdBindDescriptorSets(commandBuffer->Handle(), VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline->GetPipelineLayout(), 0, 1, &descriptorSet, 0, nullptr);
 }

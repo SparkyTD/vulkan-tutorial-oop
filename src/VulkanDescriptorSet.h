@@ -12,6 +12,8 @@ public:
 
     void WriteImage(int bindingIndex, std::shared_ptr<VulkanTextureSampler> textureSampler, std::shared_ptr<VulkanImageView> imageView);
 
+    void Bind(std::shared_ptr<VulkanCommandBuffer> commandBuffer, std::shared_ptr<VulkanGraphicsPipeline> pipeline);
+
 private:
     std::shared_ptr<VulkanDevice> device;
 

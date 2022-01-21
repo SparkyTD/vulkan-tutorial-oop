@@ -10,6 +10,9 @@ public:
 
     VkFormat FindDepthFormat();
 
+    void Begin(std::shared_ptr<VulkanCommandBuffer> commandBuffer, std::shared_ptr<VulkanFramebuffer> framebuffer);
+    void End(std::shared_ptr<VulkanCommandBuffer> commandBuffer);
+
 private:
     VkFormat FindSupportedFormat(const std::vector<VkFormat> &candidates, VkImageTiling tiling, VkFormatFeatureFlags features);
 

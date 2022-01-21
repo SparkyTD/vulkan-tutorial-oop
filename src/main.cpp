@@ -42,6 +42,7 @@
 #include "VulkanDescriptorSetBuilder.h"
 #include "VulkanDescriptorSet.h"
 #include "VulkanTextureSampler.h"
+#include "VulkanFramebuffer.h"
 
 const std::string MODEL_PATH = "models/viking_room.obj";
 const std::string TEXTURE_PATH = "textures/viking_room.png";
@@ -65,7 +66,7 @@ private:
     std::shared_ptr<VulkanCommandPool> commandPool;
     std::shared_ptr<VulkanDescriptorSetBuilder> descriptorSetBuilder;
 
-    std::vector<VkFramebuffer> swapChainFramebuffers;
+    std::vector<std::shared_ptr<VulkanFramebuffer>> swapChainFramebuffers;
 
     std::shared_ptr<VulkanImage> colorImage;
     std::shared_ptr<VulkanImage> depthImage;
@@ -128,9 +129,19 @@ private:
     }
 
     void mainLoop() {
+        uint64_t sampleCount = 0;
+        auto lastPrint = std::chrono::high_resolution_clock::now();
         while (!window->IsClosing()) {
             window->PollEvents();
+            auto t1 = std::chrono::high_resolution_clock::now();
             drawFrame();
+            sampleCount++;
+
+            if (std::chrono::duration_cast<std::chrono::milliseconds>(t1 - lastPrint).count() > 1000) {
+                printf("Avg. FPS = %lld\n", sampleCount);
+                sampleCount = 0;
+                lastPrint = t1;
+            }
         }
 
         device->WaitIdle();
@@ -160,27 +171,15 @@ private:
     }
 
     void createFramebuffers() {
-        swapChainFramebuffers.resize(swapChain->GetImageCount());
+        swapChainFramebuffers.clear();
 
         for (size_t i = 0; i < swapChain->GetImageCount(); i++) {
-            std::array<VkImageView, 3> attachments = {
-                colorImage->GetView(swapChain->GetFormat(), VK_IMAGE_ASPECT_COLOR_BIT, 1)->Handle(),
-                depthImage->GetView(renderPass->FindDepthFormat(), VK_IMAGE_ASPECT_DEPTH_BIT, 1)->Handle(),
-                swapChain->GetImageView(i)->Handle()
+            std::vector<std::shared_ptr<VulkanImageView>> attachments = {
+                colorImage->GetView(swapChain->GetFormat(), VK_IMAGE_ASPECT_COLOR_BIT, 1),
+                depthImage->GetView(renderPass->FindDepthFormat(), VK_IMAGE_ASPECT_DEPTH_BIT, 1),
+                swapChain->GetImageView(i)
             };
-
-            VkFramebufferCreateInfo framebufferInfo{};
-            framebufferInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
-            framebufferInfo.renderPass = renderPass->Handle();
-            framebufferInfo.attachmentCount = static_cast<uint32_t>(attachments.size());
-            framebufferInfo.pAttachments = attachments.data();
-            framebufferInfo.width = swapChain->GetExtent().width;
-            framebufferInfo.height = swapChain->GetExtent().height;
-            framebufferInfo.layers = 1;
-
-            if (vkCreateFramebuffer(device->Handle(), &framebufferInfo, nullptr, &swapChainFramebuffers[i]) != VK_SUCCESS) {
-                throw std::runtime_error("failed to create framebuffer!");
-            }
+            swapChainFramebuffers.push_back(std::make_shared<VulkanFramebuffer>(device, swapChain, renderPass, attachments));
         }
     }
 
@@ -208,12 +207,7 @@ private:
 
         auto stagingBuffer = std::make_shared<VulkanBuffer>(device, instance, imageSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
                                                             VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-
-        void *data;
-        vkMapMemory(device->Handle(), stagingBuffer->GetMemory(), 0, imageSize, 0, &data);
-        memcpy(data, pixels, static_cast<size_t>(imageSize));
-        vkUnmapMemory(device->Handle(), stagingBuffer->GetMemory());
-
+        stagingBuffer->CopyFrom(pixels, static_cast<size_t>(imageSize));
         stbi_image_free(pixels);
 
         textureImage = std::make_shared<VulkanImage>(instance, device, texWidth, texHeight, mipLevels, VK_SAMPLE_COUNT_1_BIT, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_TILING_OPTIMAL,
@@ -224,122 +218,9 @@ private:
         textureImage->ChangeLayout(commandBuffer, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, mipLevels);
         commandBuffer->EndAndSubmit();
 
-        copyBufferToImage(stagingBuffer->Handle(), textureImage->Handle(), static_cast<uint32_t>(texWidth), static_cast<uint32_t>(texHeight));
-        //transitioned to VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL while generating mipmaps
+        stagingBuffer->CopyTo(commandPool, textureImage);
 
-
-
-        generateMipmaps(textureImage->Handle(), VK_FORMAT_R8G8B8A8_SRGB, texWidth, texHeight, mipLevels);
-    }
-
-    void generateMipmaps(VkImage image, VkFormat imageFormat, int32_t texWidth, int32_t texHeight, uint32_t mipLevels) {
-        // Check if image format supports linear blitting
-        VkFormatProperties formatProperties;
-        vkGetPhysicalDeviceFormatProperties(instance->PhysicalDeviceHandle(), imageFormat, &formatProperties);
-
-        if (!(formatProperties.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT)) {
-            throw std::runtime_error("texture image format does not support linear blitting!");
-        }
-
-        auto commandBuffer = commandPool->AllocateBuffer()->Begin();
-
-        VkImageMemoryBarrier barrier{};
-        barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-        barrier.image = image;
-        barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-        barrier.subresourceRange.baseArrayLayer = 0;
-        barrier.subresourceRange.layerCount = 1;
-        barrier.subresourceRange.levelCount = 1;
-
-        int32_t mipWidth = texWidth;
-        int32_t mipHeight = texHeight;
-
-        for (uint32_t i = 1; i < mipLevels; i++) {
-            barrier.subresourceRange.baseMipLevel = i - 1;
-            barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-            barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-            barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-            barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
-
-            vkCmdPipelineBarrier(commandBuffer->Handle(),
-                                 VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0,
-                                 0, nullptr,
-                                 0, nullptr,
-                                 1, &barrier);
-
-            VkImageBlit blit{};
-            blit.srcOffsets[0] = {0, 0, 0};
-            blit.srcOffsets[1] = {mipWidth, mipHeight, 1};
-            blit.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-            blit.srcSubresource.mipLevel = i - 1;
-            blit.srcSubresource.baseArrayLayer = 0;
-            blit.srcSubresource.layerCount = 1;
-            blit.dstOffsets[0] = {0, 0, 0};
-            blit.dstOffsets[1] = {mipWidth > 1 ? mipWidth / 2 : 1, mipHeight > 1 ? mipHeight / 2 : 1, 1};
-            blit.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-            blit.dstSubresource.mipLevel = i;
-            blit.dstSubresource.baseArrayLayer = 0;
-            blit.dstSubresource.layerCount = 1;
-
-            vkCmdBlitImage(commandBuffer->Handle(),
-                           image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                           image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                           1, &blit,
-                           VK_FILTER_LINEAR);
-
-            barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-            barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-            barrier.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
-            barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-
-            vkCmdPipelineBarrier(commandBuffer->Handle(),
-                                 VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0,
-                                 0, nullptr,
-                                 0, nullptr,
-                                 1, &barrier);
-
-            if (mipWidth > 1) mipWidth /= 2;
-            if (mipHeight > 1) mipHeight /= 2;
-        }
-
-        barrier.subresourceRange.baseMipLevel = mipLevels - 1;
-        barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-        barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-        barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-        barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-
-        vkCmdPipelineBarrier(commandBuffer->Handle(),
-                             VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0,
-                             0, nullptr,
-                             0, nullptr,
-                             1, &barrier);
-
-        commandBuffer->EndAndSubmit();
-    }
-
-    void copyBufferToImage(VkBuffer buffer, VkImage image, uint32_t width, uint32_t height) {
-        auto commandBuffer = commandPool->AllocateBuffer()->Begin();
-
-        VkBufferImageCopy region{};
-        region.bufferOffset = 0;
-        region.bufferRowLength = 0;
-        region.bufferImageHeight = 0;
-        region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-        region.imageSubresource.mipLevel = 0;
-        region.imageSubresource.baseArrayLayer = 0;
-        region.imageSubresource.layerCount = 1;
-        region.imageOffset = {0, 0, 0};
-        region.imageExtent = {
-            width,
-            height,
-            1
-        };
-
-        vkCmdCopyBufferToImage(commandBuffer->Handle(), buffer, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
-
-        commandBuffer->EndAndSubmit();
+        textureImage->GenerateMipMaps(commandPool);
     }
 
     void loadModel() {
@@ -429,8 +310,6 @@ private:
         commandBuffers.clear();
         for (int i = 0; i < swapChainFramebuffers.size(); i++)
             commandBuffers.push_back(commandPool->AllocateBuffer());
-
-        recordCommandBuffers();
     }
 
     void recordCommandBuffers() {
@@ -438,25 +317,10 @@ private:
         for (size_t i = 0; i < commandBuffers.size(); i++) {
             commandBuffers[i]->Begin(); // Start recording into the command buffer corresponding to this swap-chain framebuffer
             {
-                VkRenderPassBeginInfo renderPassInfo{};
-                renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-                renderPassInfo.renderPass = renderPass->Handle();
-                renderPassInfo.framebuffer = swapChainFramebuffers[i];
-                renderPassInfo.renderArea.offset = {0, 0};
-                renderPassInfo.renderArea.extent = swapChain->GetExtent();
-
-                // Configure how the screen will be cleared before the Render Pass begins
-                std::array<VkClearValue, 2> clearValues{};
-                clearValues[0].color = {{0.0f, 0.0f, 0.0f, 1.0f}};
-                clearValues[1].depthStencil = {1.0f, 0};
-                renderPassInfo.clearValueCount = static_cast<uint32_t>(clearValues.size());
-                renderPassInfo.pClearValues = clearValues.data();
-
-                // Begin the Render Pass for this specific mesh (Do I need a 2nd Pass if I want to render a second mesh ith different UBO?)
-                vkCmdBeginRenderPass(commandBuffers[i]->Handle(), &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+                renderPass->Begin(commandBuffers[i], swapChainFramebuffers[i]);
                 {
                     // Bind the Shader configuration (aka Pipeline)
-                    vkCmdBindPipeline(commandBuffers[i]->Handle(), VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline->Handle());
+                    graphicsPipeline->Bind(commandBuffers[i]);
 
                     // Bind the Mesh (vertexBuffer, indexBuffer)
                     VkBuffer vertexBuffers[] = {vertexBuffer->Handle()};
@@ -465,14 +329,12 @@ private:
                     vkCmdBindIndexBuffer(commandBuffers[i]->Handle(), indexBuffer->Handle(), 0, VK_INDEX_TYPE_UINT32);
 
                     // Bind the shader descriptor set (aka which resources belong to which shader layout slots)
-                    auto descriptorSet = descriptorSets[i]->Handle();
-                    vkCmdBindDescriptorSets(commandBuffers[i]->Handle(), VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline->GetPipelineLayout(), 0, 1, &descriptorSet, 0,
-                                            nullptr);
+                    descriptorSets[i]->Bind(commandBuffers[i], graphicsPipeline);
 
                     // Main Draw command
                     vkCmdDrawIndexed(commandBuffers[i]->Handle(), static_cast<uint32_t>(indices.size()), 1, 0, 0, 0);
                 }
-                vkCmdEndRenderPass(commandBuffers[i]->Handle());
+                renderPass->End(commandBuffers[i]);
             }
             // End the recording of this command buffer. Don't submit to GPU yet, just keep it as a "list of instructions" that the render loop will execute each frame
             commandBuffers[i]->End();
@@ -513,10 +375,7 @@ private:
         ubo.proj = glm::perspective(glm::radians(45.0f), swapChain->GetExtent().width / (float) swapChain->GetExtent().height, 0.1f, 10.0f);
         ubo.proj[1][1] *= -1;
 
-        void *data;
-        vkMapMemory(device->Handle(), uniformBuffers[currentImage]->GetMemory(), 0, sizeof(ubo), 0, &data);
-        memcpy(data, &ubo, sizeof(ubo));
-        vkUnmapMemory(device->Handle(), uniformBuffers[currentImage]->GetMemory());
+        uniformBuffers[currentImage]->CopyFrom(&ubo, sizeof(ubo));
     }
 
     void drawFrame() {

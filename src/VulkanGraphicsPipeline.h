@@ -10,8 +10,9 @@ public:
                            std::shared_ptr<VulkanRenderPass> renderPass_, std::shared_ptr<VulkanDevice> device_,
                            std::shared_ptr<VulkanSwapChain> swapChain_, VkDescriptorSetLayout descriptorSetLayout);
 
-    VkDescriptorSetLayout GetDescriptorSetLayout();
     VkPipelineLayout GetPipelineLayout();
+
+    void Bind(std::shared_ptr<VulkanCommandBuffer> commandBuffer);
 
 private:
     std::shared_ptr<VulkanDevice> device;

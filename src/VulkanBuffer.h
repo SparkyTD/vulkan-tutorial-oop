@@ -12,6 +12,9 @@ public:
     VkDeviceMemory GetMemory();
 
     void CopyTo(std::shared_ptr<VulkanCommandPool> commandPool, std::shared_ptr<VulkanBuffer> destination, VkDeviceSize size);
+    void CopyTo(std::shared_ptr<VulkanCommandPool> commandPool, std::shared_ptr<VulkanImage> destination);
+
+    void CopyFrom(void* data, int length);
 
 private:
     std::shared_ptr<VulkanDevice> device;

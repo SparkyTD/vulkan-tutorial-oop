@@ -7,6 +7,7 @@
 #include "VulkanSwapChain.h"
 #include "VulkanInstance.h"
 #include "VulkanRenderPass.h"
+#include "VulkanCommandBuffer.h"
 
 VulkanGraphicsPipeline::VulkanGraphicsPipeline(std::shared_ptr<VulkanShader> vertexShader_, std::shared_ptr<VulkanShader> fragmentShader_,
                                                std::shared_ptr<VulkanRenderPass> renderPass_, std::shared_ptr<VulkanDevice> device_,
@@ -133,10 +134,10 @@ VulkanGraphicsPipeline::VulkanGraphicsPipeline(std::shared_ptr<VulkanShader> ver
     vkDestroyShaderModule(device->Handle(), vertexShader->Handle(), nullptr);
 }
 
-VkDescriptorSetLayout VulkanGraphicsPipeline::GetDescriptorSetLayout() {
-    return descriptorSetLayout;
-}
-
 VkPipelineLayout VulkanGraphicsPipeline::GetPipelineLayout() {
     return pipelineLayout;
+}
+
+void VulkanGraphicsPipeline::Bind(std::shared_ptr<VulkanCommandBuffer> commandBuffer) {
+    vkCmdBindPipeline(commandBuffer->Handle(), VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
 }

@@ -51,3 +51,36 @@ void VulkanBuffer::CopyTo(std::shared_ptr<VulkanCommandPool> commandPool, std::s
 
     commandBuffer->EndAndSubmit();
 }
+
+void VulkanBuffer::CopyFrom(void *inputData, int length) {
+    void *data;
+    vkMapMemory(device->Handle(), bufferMemory, 0, length, 0, &data);
+    memcpy(data, inputData, length);
+    vkUnmapMemory(device->Handle(), bufferMemory);
+}
+
+void VulkanBuffer::CopyTo(std::shared_ptr<VulkanCommandPool> commandPool, std::shared_ptr<VulkanImage> destination) {
+    auto commandBuffer = commandPool->AllocateBuffer()->Begin();
+
+    uint32_t width, height;
+    destination->GetSize(width, height);
+
+    VkBufferImageCopy region{};
+    region.bufferOffset = 0;
+    region.bufferRowLength = 0;
+    region.bufferImageHeight = 0;
+    region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    region.imageSubresource.mipLevel = 0;
+    region.imageSubresource.baseArrayLayer = 0;
+    region.imageSubresource.layerCount = 1;
+    region.imageOffset = {0, 0, 0};
+    region.imageExtent = {
+        width,
+        height,
+        1
+    };
+
+    vkCmdCopyBufferToImage(commandBuffer->Handle(), buffer, destination->Handle(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+
+    commandBuffer->EndAndSubmit();
+}
