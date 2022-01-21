@@ -80,6 +80,13 @@ enum class QueueFamily {
     Transfer
 };
 
+enum class ShaderStage {
+    Vertex = VK_SHADER_STAGE_VERTEX_BIT,
+    Geometry = VK_SHADER_STAGE_GEOMETRY_BIT,
+    Fragment = VK_SHADER_STAGE_FRAGMENT_BIT,
+    Compute = VK_SHADER_STAGE_COMPUTE_BIT,
+};
+
 struct UniformBufferObject {
     alignas(16) glm::mat4 model;
     alignas(16) glm::mat4 view;
