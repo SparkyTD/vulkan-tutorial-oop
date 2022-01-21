@@ -59,7 +59,7 @@ VulkanSwapChain::VulkanSwapChain(std::shared_ptr<VulkanWindow> window_, std::sha
     for (const auto &handle: imageHandles) {
         auto image = std::make_shared<VulkanImage>(handle, device);
         images.push_back(image);
-        imageViews.push_back(image->GetView(swapChainImageFormat, VK_IMAGE_ASPECT_COLOR_BIT, 1));
+        imageViews.push_back(image->GetView(swapChainImageFormat, VK_IMAGE_ASPECT_COLOR_BIT));
     }
 }
 

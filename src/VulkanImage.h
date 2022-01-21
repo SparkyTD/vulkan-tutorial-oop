@@ -9,13 +9,14 @@ public:
     VulkanImage(VkImage image_, std::shared_ptr<VulkanDevice> device_);
 
     VulkanImage(std::shared_ptr<VulkanInstance> instance_, std::shared_ptr<VulkanDevice> device_,
-                uint32_t width, uint32_t height, uint32_t mipLevels, VkSampleCountFlagBits numSamples, VkFormat format,
-                VkImageTiling tiling, VkImageUsageFlags usage, VkMemoryPropertyFlags properties);
+                uint32_t width, uint32_t height, VkSampleCountFlagBits numSamples, VkFormat format,
+                VkImageTiling tiling, VkImageUsageFlags usage, VkMemoryPropertyFlags properties, bool useMipLevels);
 
-    std::shared_ptr<VulkanImageView> GetView(VkFormat format, VkImageAspectFlags aspectFlags, uint32_t mipLevels);
+    std::shared_ptr<VulkanImageView> GetView(VkFormat format, VkImageAspectFlags aspectFlags);
 
-public:
-    void ChangeLayout(std::shared_ptr<VulkanCommandBuffer> commandBuffer, VkImageLayout oldLayout, VkImageLayout newLayout, uint32_t mipLevels);
+    std::shared_ptr<VulkanTextureSampler> CreateSampler();
+
+    void ChangeLayout(std::shared_ptr<VulkanCommandBuffer> commandBuffer, VkImageLayout oldLayout, VkImageLayout newLayout);
 
     void GetSize(uint32_t &width_, uint32_t &height_);
 

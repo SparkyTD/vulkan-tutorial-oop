@@ -4,15 +4,22 @@
 #include "VulkanInstance.h"
 #include "VulkanDevice.h"
 #include "VulkanCommandBuffer.h"
+#include "VulkanTextureSampler.h"
 
 VulkanImage::VulkanImage(VkImage image_, std::shared_ptr<VulkanDevice> device_) : image(image_), device(device_) {
 
 }
 
 VulkanImage::VulkanImage(std::shared_ptr<VulkanInstance> instance_, std::shared_ptr<VulkanDevice> device_,
-                         uint32_t width_, uint32_t height_, uint32_t mipLevels_, VkSampleCountFlagBits numSamples, VkFormat format_,
+                         uint32_t width_, uint32_t height_, VkSampleCountFlagBits numSamples, VkFormat format_,
                          VkImageTiling tiling, VkImageUsageFlags usage,
-                         VkMemoryPropertyFlags properties) : device(device_), format(format_), width(width_), height(height_), instance(instance_), mipLevels(mipLevels_) {
+                         VkMemoryPropertyFlags properties, bool useMipLevels) : device(device_), format(format_), width(width_), height(height_), instance(instance_) {
+
+    if (useMipLevels)
+        mipLevels = static_cast<uint32_t>(std::floor(std::log2(std::max(width, height)))) + 1;
+    else
+        mipLevels = 1;
+
     VkImageCreateInfo imageInfo{};
     imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
     imageInfo.imageType = VK_IMAGE_TYPE_2D;
@@ -47,7 +54,7 @@ VulkanImage::VulkanImage(std::shared_ptr<VulkanInstance> instance_, std::shared_
     vkBindImageMemory(device->Handle(), image, imageMemory, 0);
 }
 
-std::shared_ptr<VulkanImageView> VulkanImage::GetView(VkFormat format, VkImageAspectFlags aspectFlags, uint32_t mipLevels) {
+std::shared_ptr<VulkanImageView> VulkanImage::GetView(VkFormat format, VkImageAspectFlags aspectFlags) {
     std::hash<uint32_t> uint_hash;
     auto viewHash = uint_hash((uint32_t) format) + 0x9e3779b9 + uint_hash((uint32_t) aspectFlags) + 0x9e3779b1 + uint_hash(mipLevels);
     auto match = imageViewCache.find(viewHash);
@@ -89,7 +96,7 @@ uint32_t VulkanImage::FindMemoryType(std::shared_ptr<VulkanInstance> instance, u
     throw std::runtime_error("failed to find suitable memory type!");
 }
 
-void VulkanImage::ChangeLayout(std::shared_ptr<VulkanCommandBuffer> commandBuffer, VkImageLayout oldLayout, VkImageLayout newLayout, uint32_t mipLevels) {
+void VulkanImage::ChangeLayout(std::shared_ptr<VulkanCommandBuffer> commandBuffer, VkImageLayout oldLayout, VkImageLayout newLayout) {
     VkImageMemoryBarrier barrier{};
     barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
     barrier.oldLayout = oldLayout;
@@ -215,4 +222,8 @@ void VulkanImage::GenerateMipMaps(std::shared_ptr<VulkanCommandPool> commandPool
                          1, &barrier);
 
     commandBuffer->EndAndSubmit();
+}
+
+std::shared_ptr<VulkanTextureSampler> VulkanImage::CreateSampler() {
+    return std::make_shared<VulkanTextureSampler>(instance, device, mipLevels);
 }

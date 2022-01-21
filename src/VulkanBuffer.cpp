@@ -6,8 +6,8 @@
 #include "VulkanCommandBuffer.h"
 
 VulkanBuffer::VulkanBuffer(std::shared_ptr<VulkanDevice> device_, std::shared_ptr<VulkanInstance> instance_,
-                           VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties)
-    : device(device_), instance(instance_) {
+                           VkDeviceSize size_, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties)
+    : device(device_), instance(instance_), size(size_) {
     VkBufferCreateInfo bufferInfo{};
     bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
     bufferInfo.size = size;
@@ -42,11 +42,11 @@ VulkanBuffer::~VulkanBuffer() {
     vkFreeMemory(device->Handle(), bufferMemory, nullptr);
 }
 
-void VulkanBuffer::CopyTo(std::shared_ptr<VulkanCommandPool> commandPool, std::shared_ptr<VulkanBuffer> destination, VkDeviceSize size) {
+void VulkanBuffer::CopyTo(std::shared_ptr<VulkanCommandPool> commandPool, std::shared_ptr<VulkanBuffer> destination, VkDeviceSize size_) {
     auto commandBuffer = commandPool->AllocateBuffer()->Begin();
 
     VkBufferCopy copyRegion{};
-    copyRegion.size = size;
+    copyRegion.size = size_;
     vkCmdCopyBuffer(commandBuffer->Handle(), Handle(), destination->Handle(), 1, &copyRegion);
 
     commandBuffer->EndAndSubmit();
@@ -57,6 +57,8 @@ void VulkanBuffer::CopyFrom(void *inputData, int length) {
     vkMapMemory(device->Handle(), bufferMemory, 0, length, 0, &data);
     memcpy(data, inputData, length);
     vkUnmapMemory(device->Handle(), bufferMemory);
+
+    size = length; // TODO Is this necessary? When does length differ from the stored size?
 }
 
 void VulkanBuffer::CopyTo(std::shared_ptr<VulkanCommandPool> commandPool, std::shared_ptr<VulkanImage> destination) {
@@ -83,4 +85,8 @@ void VulkanBuffer::CopyTo(std::shared_ptr<VulkanCommandPool> commandPool, std::s
     vkCmdCopyBufferToImage(commandBuffer->Handle(), buffer, destination->Handle(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
 
     commandBuffer->EndAndSubmit();
+}
+
+int VulkanBuffer::GetSize() const {
+    return size;
 }

@@ -10,17 +10,12 @@
 
 #include "stb_image.h"
 
-#define TINYOBJLOADER_IMPLEMENTATION
-
-#include "tiny_obj_loader.h"
-
 #include <iostream>
 #include <fstream>
 #include <stdexcept>
 #include <algorithm>
 #include <chrono>
 #include <vector>
-#include <cstring>
 #include <cstdlib>
 #include <cstdint>
 #include <array>
@@ -43,6 +38,7 @@
 #include "VulkanDescriptorSet.h"
 #include "VulkanTextureSampler.h"
 #include "VulkanFramebuffer.h"
+#include "Mesh.h"
 
 const std::string MODEL_PATH = "models/viking_room.obj";
 const std::string TEXTURE_PATH = "textures/viking_room.png";
@@ -66,21 +62,16 @@ private:
     std::shared_ptr<VulkanCommandPool> commandPool;
     std::shared_ptr<VulkanDescriptorSetBuilder> descriptorSetBuilder;
 
-    std::vector<std::shared_ptr<VulkanFramebuffer>> swapChainFramebuffers;
-
     std::shared_ptr<VulkanImage> colorImage;
     std::shared_ptr<VulkanImage> depthImage;
     std::shared_ptr<VulkanImage> textureImage;
     std::shared_ptr<VulkanTextureSampler> textureSampler;
 
-    uint32_t mipLevels;
-
-    std::vector<Vertex> vertices;
-    std::vector<uint32_t> indices;
-
+    std::shared_ptr<Mesh> mesh;
     std::shared_ptr<VulkanBuffer> indexBuffer;
     std::shared_ptr<VulkanBuffer> vertexBuffer;
 
+    std::vector<std::shared_ptr<VulkanFramebuffer>> swapChainFramebuffers;
     std::vector<std::shared_ptr<VulkanBuffer>> uniformBuffers;
     std::vector<std::shared_ptr<VulkanDescriptorSet>> descriptorSets;
     std::vector<std::shared_ptr<VulkanCommandBuffer>> commandBuffers;
@@ -102,7 +93,7 @@ private:
         createUniformBuffers();
         createTextureImage();
 
-        textureSampler = std::make_shared<VulkanTextureSampler>(instance, device, mipLevels);
+        textureSampler = textureImage->CreateSampler();
 
         descriptorSetBuilder = std::make_shared<VulkanDescriptorSetBuilder>(device, swapChain->GetImageCount());
         descriptorSetBuilder->AddLayoutSlot(ShaderStage::Vertex, 0, ShaderResourceType::UniformBuffer, 1);
@@ -110,20 +101,21 @@ private:
         descriptorSets = descriptorSetBuilder->Build();
         for (int i = 0; i < swapChain->GetImageCount(); i++) {
             descriptorSets[i]->WriteUniformBuffer(0, uniformBuffers[i], sizeof(UniformBufferObject));
-            descriptorSets[i]->WriteImage(1, textureSampler, textureImage->GetView(VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_ASPECT_COLOR_BIT, mipLevels));
+            descriptorSets[i]->WriteImage(1, textureSampler, textureImage->GetView(VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_ASPECT_COLOR_BIT));
         }
 
         auto vertShaderModule = std::make_shared<VulkanShader>("shaders/vert.spv", device);
         auto fragShaderModule = std::make_shared<VulkanShader>("shaders/frag.spv", device);
         graphicsPipeline = std::make_shared<VulkanGraphicsPipeline>(vertShaderModule, fragShaderModule, renderPass, device, swapChain, descriptorSetBuilder->GetLayout());
 
+        mesh = std::make_shared<Mesh>(MODEL_PATH.c_str());
+        indexBuffer = mesh->CreateIndexBuffer(commandPool, instance, device);
+        vertexBuffer = mesh->CreateVertexBuffer(commandPool, instance, device);
+
         createColorResources();
         createDepthResources();
 
         createFramebuffers();
-        loadModel();
-        createVertexBuffer();
-        createIndexBuffer();
         createCommandBuffers();
         createSyncObjects();
     }
@@ -175,8 +167,8 @@ private:
 
         for (size_t i = 0; i < swapChain->GetImageCount(); i++) {
             std::vector<std::shared_ptr<VulkanImageView>> attachments = {
-                colorImage->GetView(swapChain->GetFormat(), VK_IMAGE_ASPECT_COLOR_BIT, 1),
-                depthImage->GetView(renderPass->FindDepthFormat(), VK_IMAGE_ASPECT_DEPTH_BIT, 1),
+                colorImage->GetView(swapChain->GetFormat(), VK_IMAGE_ASPECT_COLOR_BIT),
+                depthImage->GetView(renderPass->FindDepthFormat(), VK_IMAGE_ASPECT_DEPTH_BIT),
                 swapChain->GetImageView(i)
             };
             swapChainFramebuffers.push_back(std::make_shared<VulkanFramebuffer>(device, swapChain, renderPass, attachments));
@@ -184,22 +176,21 @@ private:
     }
 
     void createColorResources() {
-        colorImage = std::make_shared<VulkanImage>(instance, device, swapChain->GetExtent().width, swapChain->GetExtent().height, 1, VulkanInstance::MsaaSamples,
+        colorImage = std::make_shared<VulkanImage>(instance, device, swapChain->GetExtent().width, swapChain->GetExtent().height, VulkanInstance::MsaaSamples,
                                                    swapChain->GetFormat(), VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
-                                                   VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+                                                   VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, false);
     }
 
     void createDepthResources() {
-        depthImage = std::make_shared<VulkanImage>(instance, device, swapChain->GetExtent().width, swapChain->GetExtent().height, 1, VulkanInstance::MsaaSamples,
+        depthImage = std::make_shared<VulkanImage>(instance, device, swapChain->GetExtent().width, swapChain->GetExtent().height, VulkanInstance::MsaaSamples,
                                                    renderPass->FindDepthFormat(), VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
-                                                   VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+                                                   VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, false);
     }
 
     void createTextureImage() {
         int texWidth, texHeight, texChannels;
         stbi_uc *pixels = stbi_load(TEXTURE_PATH.c_str(), &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
         VkDeviceSize imageSize = texWidth * texHeight * 4;
-        mipLevels = static_cast<uint32_t>(std::floor(std::log2(std::max(texWidth, texHeight)))) + 1;
 
         if (!pixels) {
             throw std::runtime_error("failed to load texture image!");
@@ -210,90 +201,17 @@ private:
         stagingBuffer->CopyFrom(pixels, static_cast<size_t>(imageSize));
         stbi_image_free(pixels);
 
-        textureImage = std::make_shared<VulkanImage>(instance, device, texWidth, texHeight, mipLevels, VK_SAMPLE_COUNT_1_BIT, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_TILING_OPTIMAL,
+        textureImage = std::make_shared<VulkanImage>(instance, device, texWidth, texHeight, VK_SAMPLE_COUNT_1_BIT, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_TILING_OPTIMAL,
                                                      VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-                                                     VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+                                                     VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, true);
 
         auto commandBuffer = commandPool->AllocateBuffer()->Begin();
-        textureImage->ChangeLayout(commandBuffer, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, mipLevels);
+        textureImage->ChangeLayout(commandBuffer, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
         commandBuffer->EndAndSubmit();
 
         stagingBuffer->CopyTo(commandPool, textureImage);
 
         textureImage->GenerateMipMaps(commandPool);
-    }
-
-    void loadModel() {
-        tinyobj::attrib_t attrib;
-        std::vector<tinyobj::shape_t> shapes;
-        std::vector<tinyobj::material_t> materials;
-        std::string err;
-
-        if (!tinyobj::LoadObj(&attrib, &shapes, &materials, &err, MODEL_PATH.c_str())) {
-            throw std::runtime_error(err);
-        }
-
-        std::unordered_map<Vertex, uint32_t> uniqueVertices{};
-
-        for (const auto &shape: shapes) {
-            for (const auto &index: shape.mesh.indices) {
-                Vertex vertex{};
-
-                vertex.pos = {
-                    attrib.vertices[3 * index.vertex_index + 0],
-                    attrib.vertices[3 * index.vertex_index + 1],
-                    attrib.vertices[3 * index.vertex_index + 2]
-                };
-
-                vertex.texCoord = {
-                    attrib.texcoords[2 * index.texcoord_index + 0],
-                    1.0f - attrib.texcoords[2 * index.texcoord_index + 1]
-                };
-
-                vertex.color = {1.0f, 1.0f, 1.0f};
-
-                if (uniqueVertices.count(vertex) == 0) {
-                    uniqueVertices[vertex] = static_cast<uint32_t>(vertices.size());
-                    vertices.push_back(vertex);
-                }
-
-                indices.push_back(uniqueVertices[vertex]);
-            }
-        }
-    }
-
-    void createVertexBuffer() {
-        VkDeviceSize bufferSize = sizeof(vertices[0]) * vertices.size();
-
-        auto stagingBuffer = std::make_shared<VulkanBuffer>(device, instance, bufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-                                                            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-
-        void *data;
-        vkMapMemory(device->Handle(), stagingBuffer->GetMemory(), 0, bufferSize, 0, &data);
-        memcpy(data, vertices.data(), (size_t) bufferSize);
-        vkUnmapMemory(device->Handle(), stagingBuffer->GetMemory());
-
-        vertexBuffer = std::make_shared<VulkanBuffer>(device, instance, bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-                                                      VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-
-        stagingBuffer->CopyTo(commandPool, vertexBuffer, bufferSize);
-    }
-
-    void createIndexBuffer() {
-        VkDeviceSize bufferSize = sizeof(indices[0]) * indices.size();
-
-        auto stagingBuffer = std::make_shared<VulkanBuffer>(device, instance, bufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-                                                            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-
-        void *data;
-        vkMapMemory(device->Handle(), stagingBuffer->GetMemory(), 0, bufferSize, 0, &data);
-        memcpy(data, indices.data(), (size_t) bufferSize);
-        vkUnmapMemory(device->Handle(), stagingBuffer->GetMemory());
-
-        indexBuffer = std::make_shared<VulkanBuffer>(device, instance, bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
-                                                     VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-
-        stagingBuffer->CopyTo(commandPool, indexBuffer, bufferSize);
     }
 
     void createUniformBuffers() {
@@ -332,7 +250,7 @@ private:
                     descriptorSets[i]->Bind(commandBuffers[i], graphicsPipeline);
 
                     // Main Draw command
-                    vkCmdDrawIndexed(commandBuffers[i]->Handle(), static_cast<uint32_t>(indices.size()), 1, 0, 0, 0);
+                    vkCmdDrawIndexed(commandBuffers[i]->Handle(), mesh->GetIndexCount(), 1, 0, 0, 0);
                 }
                 renderPass->End(commandBuffers[i]);
             }
