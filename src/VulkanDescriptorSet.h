@@ -10,7 +10,7 @@ public:
 
     void WriteUniformBuffer(int bindingIndex, std::shared_ptr<VulkanBuffer> buffer, int bufferSize);
 
-    void WriteImage(int bindingIndex, VkSampler textureSampler, std::shared_ptr<VulkanImageView> imageView);
+    void WriteImage(int bindingIndex, std::shared_ptr<VulkanTextureSampler> textureSampler, std::shared_ptr<VulkanImageView> imageView);
 
 private:
     std::shared_ptr<VulkanDevice> device;

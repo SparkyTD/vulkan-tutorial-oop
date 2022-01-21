@@ -14,3 +14,4 @@ class VulkanImage;
 class VulkanImageView;
 class VulkanBuffer;
 class VulkanDescriptorSet;
+class VulkanTextureSampler;

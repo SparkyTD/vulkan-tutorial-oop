@@ -2,6 +2,7 @@
 #include "VulkanDevice.h"
 #include "VulkanBuffer.h"
 #include "VulkanImageView.h"
+#include "VulkanTextureSampler.h"
 
 VulkanDescriptorSet::VulkanDescriptorSet(std::shared_ptr<VulkanDevice> device_, VkDescriptorSet descriptorSet_)
     : device(device_), descriptorSet(descriptorSet_) {
@@ -25,11 +26,11 @@ void VulkanDescriptorSet::WriteUniformBuffer(int bindingIndex, std::shared_ptr<V
     vkUpdateDescriptorSets(device->Handle(), 1, &descriptorWrite, 0, nullptr);
 }
 
-void VulkanDescriptorSet::WriteImage(int bindingIndex, VkSampler textureSampler, std::shared_ptr<VulkanImageView> imageView) {
+void VulkanDescriptorSet::WriteImage(int bindingIndex, std::shared_ptr<VulkanTextureSampler> textureSampler, std::shared_ptr<VulkanImageView> imageView) {
     VkDescriptorImageInfo imageInfo{};
     imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     imageInfo.imageView = imageView->Handle();
-    imageInfo.sampler = textureSampler;
+    imageInfo.sampler = textureSampler->Handle();
 
     VkWriteDescriptorSet descriptorWrite{};
     descriptorWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;

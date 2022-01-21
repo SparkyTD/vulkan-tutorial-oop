@@ -41,6 +41,7 @@
 #include "VulkanBuffer.h"
 #include "VulkanDescriptorSetBuilder.h"
 #include "VulkanDescriptorSet.h"
+#include "VulkanTextureSampler.h"
 
 const std::string MODEL_PATH = "models/viking_room.obj";
 const std::string TEXTURE_PATH = "textures/viking_room.png";
@@ -69,9 +70,9 @@ private:
     std::shared_ptr<VulkanImage> colorImage;
     std::shared_ptr<VulkanImage> depthImage;
     std::shared_ptr<VulkanImage> textureImage;
+    std::shared_ptr<VulkanTextureSampler> textureSampler;
 
     uint32_t mipLevels;
-    VkSampler textureSampler;
 
     std::vector<Vertex> vertices;
     std::vector<uint32_t> indices;
@@ -80,10 +81,7 @@ private:
     std::shared_ptr<VulkanBuffer> vertexBuffer;
 
     std::vector<std::shared_ptr<VulkanBuffer>> uniformBuffers;
-
-    // VkDescriptorPool descriptorPool;
     std::vector<std::shared_ptr<VulkanDescriptorSet>> descriptorSets;
-
     std::vector<std::shared_ptr<VulkanCommandBuffer>> commandBuffers;
 
     std::vector<VkSemaphore> imageAvailableSemaphores;
@@ -102,13 +100,14 @@ private:
 
         createUniformBuffers();
         createTextureImage();
-        createTextureSampler();
+
+        textureSampler = std::make_shared<VulkanTextureSampler>(instance, device, mipLevels);
 
         descriptorSetBuilder = std::make_shared<VulkanDescriptorSetBuilder>(device, swapChain->GetImageCount());
         descriptorSetBuilder->AddLayoutSlot(ShaderStage::Vertex, 0, ShaderResourceType::UniformBuffer, 1);
         descriptorSetBuilder->AddLayoutSlot(ShaderStage::Fragment, 1, ShaderResourceType::ImageSampler, 1);
         descriptorSets = descriptorSetBuilder->Build();
-        for(int i = 0; i < swapChain->GetImageCount(); i++) {
+        for (int i = 0; i < swapChain->GetImageCount(); i++) {
             descriptorSets[i]->WriteUniformBuffer(0, uniformBuffers[i], sizeof(UniformBufferObject));
             descriptorSets[i]->WriteImage(1, textureSampler, textureImage->GetView(VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_ASPECT_COLOR_BIT, mipLevels));
         }
@@ -149,26 +148,13 @@ private:
         swapChain = std::make_shared<VulkanSwapChain>(window, device, instance);
         renderPass = std::make_shared<VulkanRenderPass>(instance, device, swapChain);
 
-        createUniformBuffers();
-
-        descriptorSetBuilder = std::make_shared<VulkanDescriptorSetBuilder>(device, swapChain->GetImageCount());
-        descriptorSetBuilder->AddLayoutSlot(ShaderStage::Vertex, 0, ShaderResourceType::UniformBuffer, 1);
-        descriptorSetBuilder->AddLayoutSlot(ShaderStage::Fragment, 1, ShaderResourceType::ImageSampler, 1);
-        descriptorSets = descriptorSetBuilder->Build();
-        for(int i = 0; i < swapChain->GetImageCount(); i++) {
-            descriptorSets[i]->WriteUniformBuffer(0, uniformBuffers[i], sizeof(UniformBufferObject));
-            descriptorSets[i]->WriteImage(1, textureSampler, textureImage->GetView(VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_ASPECT_COLOR_BIT, mipLevels));
-        }
-
-        auto vertShaderModule = std::make_shared<VulkanShader>("shaders/vert.spv", device);
-        auto fragShaderModule = std::make_shared<VulkanShader>("shaders/frag.spv", device);
-        graphicsPipeline = std::make_shared<VulkanGraphicsPipeline>(vertShaderModule, fragShaderModule, renderPass, device, swapChain, descriptorSetBuilder->GetLayout());
-
         createColorResources();
         createDepthResources();
         createFramebuffers();
 
-        createCommandBuffers();
+        auto vertShaderModule = std::make_shared<VulkanShader>("shaders/vert.spv", device);
+        auto fragShaderModule = std::make_shared<VulkanShader>("shaders/frag.spv", device);
+        graphicsPipeline = std::make_shared<VulkanGraphicsPipeline>(vertShaderModule, fragShaderModule, renderPass, device, swapChain, descriptorSetBuilder->GetLayout());
 
         imagesInFlight.resize(swapChain->GetImageCount(), VK_NULL_HANDLE);
     }
@@ -333,33 +319,6 @@ private:
         commandBuffer->EndAndSubmit();
     }
 
-    void createTextureSampler() {
-        VkPhysicalDeviceProperties properties{};
-        vkGetPhysicalDeviceProperties(instance->PhysicalDeviceHandle(), &properties);
-
-        VkSamplerCreateInfo samplerInfo{};
-        samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
-        samplerInfo.magFilter = VK_FILTER_LINEAR;
-        samplerInfo.minFilter = VK_FILTER_LINEAR;
-        samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-        samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-        samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-        samplerInfo.anisotropyEnable = VK_TRUE;
-        samplerInfo.maxAnisotropy = properties.limits.maxSamplerAnisotropy;
-        samplerInfo.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
-        samplerInfo.unnormalizedCoordinates = VK_FALSE;
-        samplerInfo.compareEnable = VK_FALSE;
-        samplerInfo.compareOp = VK_COMPARE_OP_ALWAYS;
-        samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
-        samplerInfo.minLod = 0.0f;
-        samplerInfo.maxLod = static_cast<float>(mipLevels);
-        samplerInfo.mipLodBias = 0.0f;
-
-        if (vkCreateSampler(device->Handle(), &samplerInfo, nullptr, &textureSampler) != VK_SUCCESS) {
-            throw std::runtime_error("failed to create texture sampler!");
-        }
-    }
-
     void copyBufferToImage(VkBuffer buffer, VkImage image, uint32_t width, uint32_t height) {
         auto commandBuffer = commandPool->AllocateBuffer()->Begin();
 
@@ -468,10 +427,8 @@ private:
 
     void createCommandBuffers() {
         commandBuffers.clear();
-
-        for (int i = 0; i < swapChainFramebuffers.size(); i++) {
+        for (int i = 0; i < swapChainFramebuffers.size(); i++)
             commandBuffers.push_back(commandPool->AllocateBuffer());
-        }
 
         recordCommandBuffers();
     }
@@ -606,7 +563,7 @@ private:
 
         result = vkQueueSubmit(device->GetGraphicsQueue(), 1, &submitInfo, inFlightFences[currentFrame]);
         if (result != VK_SUCCESS) {
-            if(result == VK_ERROR_DEVICE_LOST) {
+            if (result == VK_ERROR_DEVICE_LOST) {
                 throw std::runtime_error("vkQueueSubmit(): VK_ERROR_DEVICE_LOST");
             } else {
                 throw std::runtime_error("failed to submit draw command buffer!");
