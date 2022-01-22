@@ -231,13 +231,12 @@ private:
 
     void drawFrame() {
         swapChain->WaitForLastSubmit();
-        // vkResetCommandBuffer(commandBuffers[currentImage]->Handle(), VK_COMMAND_BUFFER_RESET_RELEASE_RESOURCES_BIT);
+        // vkResetCommandBuffer(commandBuffers[imageIndex]->Handle(), VK_COMMAND_BUFFER_RESET_RELEASE_RESOURCES_BIT);
 
-        swapChain->AcquireNextImage();
-        int currentImage = swapChain->GetCurrentImage();
+        int imageIndex = swapChain->AcquireNextImage();
 
-        updateUniformBuffer(currentImage);
-        recordCommandBuffers(currentImage);
+        updateUniformBuffer(imageIndex);
+        recordCommandBuffers(imageIndex);
 
         if (swapChain->IsInvalid() || window->IsWindowResized(true)) {
             recreateSwapChain();
@@ -245,7 +244,7 @@ private:
         }
 
         // Submit
-        swapChain->SubmitCommands(commandBuffers[currentImage]);
+        swapChain->SubmitCommands(commandBuffers[imageIndex]);
 
         // Present
         swapChain->Present();

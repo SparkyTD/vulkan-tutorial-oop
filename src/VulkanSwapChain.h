@@ -12,7 +12,7 @@ public:
 
     void WaitForLastSubmit();
 
-    void AcquireNextImage();
+    uint32_t AcquireNextImage();
 
     void SubmitCommands(std::shared_ptr<VulkanCommandBuffer> commandBuffer);
 
@@ -38,7 +38,9 @@ private:
     VkExtent2D ChooseSwapExtent(const VkSurfaceCapabilitiesKHR &capabilities);
 
 private:
-    const uint32_t swapImageCount = 2;
+    const int maxFramesInFlight = 2;
+    const uint32_t desiredSwapImageCount = 3;
+    uint32_t swapImageCount = -1;
 
     std::shared_ptr<VulkanDevice> device;
     std::shared_ptr<VulkanInstance> instance;
@@ -50,8 +52,10 @@ private:
     std::vector<VkSemaphore> imageAvailableSemaphores;
     std::vector<VkSemaphore> renderFinishedSemaphores;
     std::vector<VkFence> inFlightFences;
+    std::vector<VkFence> imagesInFlight;
 
-    uint32_t currentImageIndex = 0;
+    uint32_t imageIndex = 0;
+    uint32_t currentFrame = 0;
     VkFormat swapChainImageFormat;
     VkExtent2D swapChainExtent;
 

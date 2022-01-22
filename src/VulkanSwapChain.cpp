@@ -17,13 +17,13 @@ VulkanSwapChain::VulkanSwapChain(std::shared_ptr<VulkanWindow> window_, std::sha
     VkPresentModeKHR presentMode = ChooseSwapPresentMode(swapChainSupport.presentModes);
     VkExtent2D extent = ChooseSwapExtent(swapChainSupport.capabilities);
 
-    uint32_t imageCount = std::max(swapChainSupport.capabilities.minImageCount, std::min(swapImageCount, swapChainSupport.capabilities.maxImageCount));
+    swapImageCount = std::max(swapChainSupport.capabilities.minImageCount, std::min(desiredSwapImageCount, swapChainSupport.capabilities.maxImageCount));
 
     VkSwapchainCreateInfoKHR createInfo{};
     createInfo.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
     createInfo.surface = instance->SurfaceHandle();
 
-    createInfo.minImageCount = imageCount;
+    createInfo.minImageCount = swapImageCount;
     createInfo.imageFormat = surfaceFormat.format;
     createInfo.imageColorSpace = surfaceFormat.colorSpace;
     createInfo.imageExtent = extent;
@@ -61,9 +61,10 @@ VulkanSwapChain::VulkanSwapChain(std::shared_ptr<VulkanWindow> window_, std::sha
     }
 
     // Create Synchronization objects
-    imageAvailableSemaphores.resize(swapImageCount);
-    renderFinishedSemaphores.resize(swapImageCount);
-    inFlightFences.resize(swapImageCount);
+    imageAvailableSemaphores.resize(maxFramesInFlight);
+    renderFinishedSemaphores.resize(maxFramesInFlight);
+    inFlightFences.resize(maxFramesInFlight);
+    imagesInFlight.resize(swapImageCount);
 
     VkSemaphoreCreateInfo semaphoreInfo{};
     semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
@@ -72,7 +73,7 @@ VulkanSwapChain::VulkanSwapChain(std::shared_ptr<VulkanWindow> window_, std::sha
     fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
     fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
 
-    for (size_t i = 0; i < swapImageCount; i++) {
+    for (size_t i = 0; i < maxFramesInFlight; i++) {
         if (vkCreateSemaphore(device->Handle(), &semaphoreInfo, nullptr, &imageAvailableSemaphores[i]) != VK_SUCCESS ||
             vkCreateSemaphore(device->Handle(), &semaphoreInfo, nullptr, &renderFinishedSemaphores[i]) != VK_SUCCESS ||
             vkCreateFence(device->Handle(), &fenceInfo, nullptr, &inFlightFences[i]) != VK_SUCCESS) {
@@ -135,32 +136,40 @@ VkFormat VulkanSwapChain::GetFormat() {
 }
 
 void VulkanSwapChain::WaitForLastSubmit() {
-    vkWaitForFences(device->Handle(), 1, &inFlightFences[currentImageIndex], VK_TRUE, UINT64_MAX);
+    vkWaitForFences(device->Handle(), 1, &inFlightFences[currentFrame], VK_TRUE, UINT64_MAX);
 }
 
-void VulkanSwapChain::AcquireNextImage() {
-    lastAcquireResult = vkAcquireNextImageKHR(device->Handle(), swapChain, UINT64_MAX, imageAvailableSemaphores[currentImageIndex], VK_NULL_HANDLE, &currentImageIndex);
+uint32_t VulkanSwapChain::AcquireNextImage() {
+    lastAcquireResult = vkAcquireNextImageKHR(device->Handle(), swapChain, UINT64_MAX, imageAvailableSemaphores[currentFrame], VK_NULL_HANDLE, &imageIndex);
 
     if (lastAcquireResult != VK_SUCCESS && lastAcquireResult != VK_SUBOPTIMAL_KHR) {
         throw std::runtime_error("failed to acquire swap chain image!");
     }
+
+    return imageIndex;
 }
 
 void VulkanSwapChain::SubmitCommands(std::shared_ptr<VulkanCommandBuffer> commandBuffer) {
+    if (imagesInFlight[imageIndex] != VK_NULL_HANDLE) {
+        vkWaitForFences(device->Handle(), 1, &imagesInFlight[imageIndex], VK_TRUE, UINT64_MAX);
+    }
+    imagesInFlight[imageIndex] = inFlightFences[currentFrame];
+
     auto commandBufferHandle = commandBuffer->Handle();
     VkSubmitInfo submitInfo{};
     submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
     VkPipelineStageFlags waitStages[] = {VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
     submitInfo.waitSemaphoreCount = 1;
-    submitInfo.pWaitSemaphores = &imageAvailableSemaphores[currentImageIndex]; // Wait for vkAcquireNextImageKHR to signal the semaphore
+    submitInfo.pWaitSemaphores = &imageAvailableSemaphores[currentFrame]; // Wait for vkAcquireNextImageKHR to signal the semaphore
     submitInfo.pWaitDstStageMask = waitStages;
     submitInfo.commandBufferCount = 1;
     submitInfo.pCommandBuffers = &commandBufferHandle;
     submitInfo.signalSemaphoreCount = 1;
-    submitInfo.pSignalSemaphores = &renderFinishedSemaphores[currentImageIndex]; // Signal this semaphore when rendering is finished
+    submitInfo.pSignalSemaphores = &renderFinishedSemaphores[currentFrame]; // Signal this semaphore when rendering is finished
 
-    vkResetFences(device->Handle(), 1, &inFlightFences[currentImageIndex]); // Reset this fence before giving it to vkQueueSubmit
-    lastSubmitResult = vkQueueSubmit(device->GetGraphicsQueue(), 1, &submitInfo, inFlightFences[currentImageIndex]); // Signal this CPU fence after all the commands have executed
+    vkResetFences(device->Handle(), 1, &inFlightFences[currentFrame]); // Reset this fence before giving it to vkQueueSubmit
+
+    lastSubmitResult = vkQueueSubmit(device->GetGraphicsQueue(), 1, &submitInfo, inFlightFences[currentFrame]); // Signal this CPU fence after all the commands have executed
     if (lastSubmitResult != VK_SUCCESS) {
         if (lastSubmitResult == VK_ERROR_DEVICE_LOST) {
             throw std::runtime_error("vkQueueSubmit(): VK_ERROR_DEVICE_LOST");
@@ -174,16 +183,18 @@ void VulkanSwapChain::Present() {
     VkPresentInfoKHR presentInfo{};
     presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
     presentInfo.waitSemaphoreCount = 1;
-    presentInfo.pWaitSemaphores = &renderFinishedSemaphores[currentImageIndex]; // Present begins after rendering commands have been executed
+    presentInfo.pWaitSemaphores = &renderFinishedSemaphores[currentFrame]; // Present begins after rendering commands have been executed
     VkSwapchainKHR swapChains[] = {swapChain};
     presentInfo.swapchainCount = 1;
     presentInfo.pSwapchains = swapChains;
-    presentInfo.pImageIndices = &currentImageIndex;
+    presentInfo.pImageIndices = &imageIndex;
     lastPresentResult = vkQueuePresentKHR(device->GetPresentQueue(), &presentInfo);
 
     if (lastPresentResult != VK_SUCCESS) {
         throw std::runtime_error("failed to present swap chain image!");
     }
+
+    currentFrame = (currentFrame + 1) % maxFramesInFlight;
 }
 
 bool VulkanSwapChain::IsInvalid() const {
@@ -197,7 +208,7 @@ bool VulkanSwapChain::IsInvalid() const {
 }
 
 uint32_t VulkanSwapChain::GetCurrentImage() const {
-    return currentImageIndex;
+    return currentFrame;
 }
 
 VulkanSwapChain::~VulkanSwapChain() {
