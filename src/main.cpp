@@ -2,10 +2,6 @@
 
 #include <GLFW/glfw3.h>
 
-#define GLM_FORCE_RADIANS
-#define GLM_FORCE_DEPTH_ZERO_TO_ONE
-#define GLM_ENABLE_EXPERIMENTAL
-
 #include <iostream>
 #include <stdexcept>
 #include <algorithm>
@@ -51,7 +47,7 @@ private:
     std::shared_ptr<VulkanDevice> device;
     std::shared_ptr<VulkanSwapChain> swapChain;
     std::shared_ptr<VulkanRenderPass> renderPass;
-    std::shared_ptr<VulkanGraphicsPipeline> graphicsPipeline;
+    std::shared_ptr<VulkanGraphicsPipeline> texturedGraphicsPipeline;
     std::shared_ptr<VulkanCommandPool> commandPool;
     std::shared_ptr<VulkanDescriptorSetBuilder> descriptorSetBuilder;
 
@@ -82,10 +78,9 @@ private:
         renderPass = std::make_shared<VulkanRenderPass>(instance, device, swapChain);
         commandPool = std::make_shared<VulkanCommandPool>(QueueFamily::Graphics, device, instance);
         textureSampler = std::make_shared<VulkanTextureSampler>(instance, device);
+        textureImage = VulkanImage::LoadFrom(TEXTURE_PATH.c_str(), instance, device, commandPool);
 
         createUniformBuffers();
-
-        textureImage = VulkanImage::LoadFrom(TEXTURE_PATH.c_str(), instance, device, commandPool);
 
         descriptorSetBuilder = std::make_shared<VulkanDescriptorSetBuilder>(device, swapChain->GetImageCount());
         descriptorSetBuilder->AddLayoutSlot(ShaderStage::Vertex, 0, ShaderResourceType::UniformBuffer, 1);
@@ -96,9 +91,10 @@ private:
             descriptorSets[i]->WriteImage(1, textureSampler, textureImage->GetView(VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_ASPECT_COLOR_BIT));
         }
 
-        auto vertShaderModule = std::make_shared<VulkanShader>("shaders/vert.spv", device);
-        auto fragShaderModule = std::make_shared<VulkanShader>("shaders/frag.spv", device);
-        graphicsPipeline = std::make_shared<VulkanGraphicsPipeline>(vertShaderModule, fragShaderModule, renderPass, device, swapChain, descriptorSetBuilder->GetLayout());
+        texturedGraphicsPipeline = std::make_shared<VulkanGraphicsPipeline>(
+            std::make_shared<VulkanShader>("shaders/vert.spv", device),
+            std::make_shared<VulkanShader>("shaders/frag.spv", device),
+            renderPass, device, swapChain, descriptorSetBuilder->GetLayout());
 
         mesh = std::make_shared<Mesh>(MODEL_PATH.c_str());
         mesh->CreateBuffers(commandPool, instance, device);
@@ -109,6 +105,28 @@ private:
         createFramebuffers();
         createCommandBuffers();
         createSyncObjects();
+    }
+
+    void recreateSwapChain() {
+        int width = 0, height = 0;
+        window->GetFramebufferSize(width, height);
+        while (width == 0 || height == 0) {
+            window->GetFramebufferSize(width, height);
+            window->WaitForEvents();
+        }
+
+        device->WaitIdle();
+        swapChain = std::make_shared<VulkanSwapChain>(window, device, instance);
+        renderPass = std::make_shared<VulkanRenderPass>(instance, device, swapChain);
+
+        createColorResources();
+        createDepthResources();
+        createFramebuffers();
+
+        texturedGraphicsPipeline = std::make_shared<VulkanGraphicsPipeline>(
+            std::make_shared<VulkanShader>("shaders/vert.spv", device),
+            std::make_shared<VulkanShader>("shaders/frag.spv", device),
+            renderPass, device, swapChain, descriptorSetBuilder->GetLayout());
     }
 
     void mainLoop() {
@@ -128,29 +146,6 @@ private:
         }
 
         device->WaitIdle();
-    }
-
-    void recreateSwapChain() {
-        int width = 0, height = 0;
-        window->GetFramebufferSize(width, height);
-        while (width == 0 || height == 0) {
-            window->GetFramebufferSize(width, height);
-            window->WaitForEvents();
-        }
-
-        device->WaitIdle();
-        swapChain = std::make_shared<VulkanSwapChain>(window, device, instance);
-        renderPass = std::make_shared<VulkanRenderPass>(instance, device, swapChain);
-
-        createColorResources();
-        createDepthResources();
-        createFramebuffers();
-
-        auto vertShaderModule = std::make_shared<VulkanShader>("shaders/vert.spv", device);
-        auto fragShaderModule = std::make_shared<VulkanShader>("shaders/frag.spv", device);
-        graphicsPipeline = std::make_shared<VulkanGraphicsPipeline>(vertShaderModule, fragShaderModule, renderPass, device, swapChain, descriptorSetBuilder->GetLayout());
-
-        imagesInFlight.resize(swapChain->GetImageCount(), VK_NULL_HANDLE);
     }
 
     void createFramebuffers() {
@@ -239,10 +234,10 @@ private:
                 renderPass->Begin(commandBuffers[i], swapChainFramebuffers[i]);
                 {
                     // Bind the Shader configuration (aka Pipeline)
-                    graphicsPipeline->Bind(commandBuffers[i]);
+                    texturedGraphicsPipeline->Bind(commandBuffers[i]);
 
                     // Bind the shader descriptor set (aka which resources belong to which shader layout slots)
-                    descriptorSets[i]->Bind(commandBuffers[i], graphicsPipeline);
+                    descriptorSets[i]->Bind(commandBuffers[i], texturedGraphicsPipeline);
 
                     // Bind the Mesh
                     mesh->Bind(commandBuffers[i]);
@@ -258,74 +253,75 @@ private:
     }
 
     void drawFrame() {
-        recordCommandBuffers();
-
         vkWaitForFences(device->Handle(), 1, &inFlightFences[currentFrame], VK_TRUE, UINT64_MAX);
 
         uint32_t imageIndex;
         VkResult result = vkAcquireNextImageKHR(device->Handle(), swapChain->Handle(), UINT64_MAX, imageAvailableSemaphores[currentFrame], VK_NULL_HANDLE, &imageIndex);
 
-        if (result == VK_ERROR_OUT_OF_DATE_KHR) {
+        printf("imageIndex = %d; currentFrame = %lld\n", imageIndex, currentFrame);
+
+        if (result == VK_ERROR_OUT_OF_DATE_KHR || window->IsWindowResized(true)) {
             recreateSwapChain();
             return;
         } else if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR) {
             throw std::runtime_error("failed to acquire swap chain image!");
         }
 
-        updateUniformBuffer(imageIndex);
+        // Update UBOs and Record Scene
+        {
+            updateUniformBuffer(imageIndex);
+            recordCommandBuffers();
+        }
 
         if (imagesInFlight[imageIndex] != VK_NULL_HANDLE) {
             vkWaitForFences(device->Handle(), 1, &imagesInFlight[imageIndex], VK_TRUE, UINT64_MAX);
         }
         imagesInFlight[imageIndex] = inFlightFences[currentFrame];
 
-        VkSubmitInfo submitInfo{};
-        submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+        // Submit
+        {
+            auto commandBuffer = commandBuffers[imageIndex]->Handle();
+            VkSubmitInfo submitInfo{};
+            submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+            VkSemaphore waitSemaphores[] = {imageAvailableSemaphores[currentFrame]};
+            VkPipelineStageFlags waitStages[] = {VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
+            submitInfo.waitSemaphoreCount = 1;
+            submitInfo.pWaitSemaphores = waitSemaphores;
+            submitInfo.pWaitDstStageMask = waitStages;
+            submitInfo.commandBufferCount = 1;
+            submitInfo.pCommandBuffers = &commandBuffer;
+            submitInfo.signalSemaphoreCount = 1;
+            submitInfo.pSignalSemaphores = &renderFinishedSemaphores[currentFrame]; // Signal this semaphore when rendering is finished
 
-        VkSemaphore waitSemaphores[] = {imageAvailableSemaphores[currentFrame]};
-        VkPipelineStageFlags waitStages[] = {VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
-        submitInfo.waitSemaphoreCount = 1;
-        submitInfo.pWaitSemaphores = waitSemaphores;
-        submitInfo.pWaitDstStageMask = waitStages;
+            vkResetFences(device->Handle(), 1, &inFlightFences[currentFrame]);
 
-        auto commandBuffer = commandBuffers[imageIndex]->Handle();
-
-        submitInfo.commandBufferCount = 1;
-        submitInfo.pCommandBuffers = &commandBuffer;
-
-        VkSemaphore signalSemaphores[] = {renderFinishedSemaphores[currentFrame]};
-        submitInfo.signalSemaphoreCount = 1;
-        submitInfo.pSignalSemaphores = signalSemaphores;
-
-        vkResetFences(device->Handle(), 1, &inFlightFences[currentFrame]);
-
-        result = vkQueueSubmit(device->GetGraphicsQueue(), 1, &submitInfo, inFlightFences[currentFrame]);
-        if (result != VK_SUCCESS) {
-            if (result == VK_ERROR_DEVICE_LOST) {
-                throw std::runtime_error("vkQueueSubmit(): VK_ERROR_DEVICE_LOST");
-            } else {
-                throw std::runtime_error("failed to submit draw command buffer!");
+            result = vkQueueSubmit(device->GetGraphicsQueue(), 1, &submitInfo, inFlightFences[currentFrame]);
+            if (result != VK_SUCCESS) {
+                if (result == VK_ERROR_DEVICE_LOST) {
+                    throw std::runtime_error("vkQueueSubmit(): VK_ERROR_DEVICE_LOST");
+                } else {
+                    throw std::runtime_error("failed to submit draw command buffer!");
+                }
             }
         }
 
-        VkPresentInfoKHR presentInfo{};
-        presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
+        // Present
+        {
+            VkPresentInfoKHR presentInfo{};
+            presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
+            presentInfo.waitSemaphoreCount = 1;
+            presentInfo.pWaitSemaphores = &renderFinishedSemaphores[currentFrame]; // Present begins after rendering commands have been executed
+            VkSwapchainKHR swapChains[] = {swapChain->Handle()};
+            presentInfo.swapchainCount = 1;
+            presentInfo.pSwapchains = swapChains;
+            presentInfo.pImageIndices = &imageIndex;
+            result = vkQueuePresentKHR(device->GetPresentQueue(), &presentInfo);
 
-        presentInfo.waitSemaphoreCount = 1;
-        presentInfo.pWaitSemaphores = signalSemaphores;
-
-        VkSwapchainKHR swapChains[] = {swapChain->Handle()};
-        presentInfo.swapchainCount = 1;
-        presentInfo.pSwapchains = swapChains;
-
-        presentInfo.pImageIndices = &imageIndex;
-
-        result = vkQueuePresentKHR(device->GetPresentQueue(), &presentInfo);
-
-        if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR || window->IsWindowResized(true)) {
-            recreateSwapChain();
-        } else if (result != VK_SUCCESS) {
-            throw std::runtime_error("failed to present swap chain image!");
+            if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR || window->IsWindowResized(true)) {
+                recreateSwapChain();
+            } else if (result != VK_SUCCESS) {
+                throw std::runtime_error("failed to present swap chain image!");
+            }
         }
 
         currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;

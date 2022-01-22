@@ -16,10 +16,8 @@ VulkanSwapChain::VulkanSwapChain(std::shared_ptr<VulkanWindow> window_, std::sha
     VkPresentModeKHR presentMode = ChooseSwapPresentMode(swapChainSupport.presentModes);
     VkExtent2D extent = ChooseSwapExtent(swapChainSupport.capabilities);
 
-    uint32_t imageCount = swapChainSupport.capabilities.minImageCount/* + 1*/;
-    if (swapChainSupport.capabilities.maxImageCount > 0 && imageCount > swapChainSupport.capabilities.maxImageCount) {
-        imageCount = swapChainSupport.capabilities.maxImageCount;
-    }
+    const uint32_t desiredSwapSize = 2;
+    uint32_t imageCount = std::max(swapChainSupport.capabilities.minImageCount, std::min(desiredSwapSize, swapChainSupport.capabilities.maxImageCount));
 
     VkSwapchainCreateInfoKHR createInfo{};
     createInfo.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
