@@ -67,7 +67,7 @@ private:
     std::vector<VkSemaphore> imageAvailableSemaphores;
     std::vector<VkSemaphore> renderFinishedSemaphores;
     std::vector<VkFence> inFlightFences;
-    std::vector<VkFence> imagesInFlight;
+    // std::vector<VkFence> imagesInFlight;
     size_t currentFrame = 0;
 
     void initVulkan() { // TODO
@@ -193,7 +193,7 @@ private:
         imageAvailableSemaphores.resize(MAX_FRAMES_IN_FLIGHT);
         renderFinishedSemaphores.resize(MAX_FRAMES_IN_FLIGHT);
         inFlightFences.resize(MAX_FRAMES_IN_FLIGHT);
-        imagesInFlight.resize(swapChain->GetImageCount(), VK_NULL_HANDLE);
+        //imagesInFlight.resize(swapChain->GetImageCount(), VK_NULL_HANDLE);
 
         VkSemaphoreCreateInfo semaphoreInfo{};
         semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
@@ -255,10 +255,10 @@ private:
     void drawFrame() {
         vkWaitForFences(device->Handle(), 1, &inFlightFences[currentFrame], VK_TRUE, UINT64_MAX);
 
+        // Get next image
         uint32_t imageIndex;
         VkResult result = vkAcquireNextImageKHR(device->Handle(), swapChain->Handle(), UINT64_MAX, imageAvailableSemaphores[currentFrame], VK_NULL_HANDLE, &imageIndex);
-
-        printf("imageIndex = %d; currentFrame = %lld\n", imageIndex, currentFrame);
+        // This signals imageAvailableSemaphores[currentFrame] once the image is ready
 
         if (result == VK_ERROR_OUT_OF_DATE_KHR || window->IsWindowResized(true)) {
             recreateSwapChain();
@@ -273,29 +273,27 @@ private:
             recordCommandBuffers();
         }
 
-        if (imagesInFlight[imageIndex] != VK_NULL_HANDLE) {
-            vkWaitForFences(device->Handle(), 1, &imagesInFlight[imageIndex], VK_TRUE, UINT64_MAX);
-        }
-        imagesInFlight[imageIndex] = inFlightFences[currentFrame];
+        // if (imagesInFlight[imageIndex] != VK_NULL_HANDLE) {
+        //     vkWaitForFences(device->Handle(), 1, &imagesInFlight[imageIndex], VK_TRUE, UINT64_MAX);
+        // }
+        // imagesInFlight[imageIndex] = inFlightFences[currentFrame];
 
         // Submit
         {
             auto commandBuffer = commandBuffers[imageIndex]->Handle();
             VkSubmitInfo submitInfo{};
             submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-            VkSemaphore waitSemaphores[] = {imageAvailableSemaphores[currentFrame]};
             VkPipelineStageFlags waitStages[] = {VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
             submitInfo.waitSemaphoreCount = 1;
-            submitInfo.pWaitSemaphores = waitSemaphores;
+            submitInfo.pWaitSemaphores = &imageAvailableSemaphores[currentFrame]; // Wait for vkAcquireNextImageKHR to signal the semaphore
             submitInfo.pWaitDstStageMask = waitStages;
             submitInfo.commandBufferCount = 1;
             submitInfo.pCommandBuffers = &commandBuffer;
             submitInfo.signalSemaphoreCount = 1;
             submitInfo.pSignalSemaphores = &renderFinishedSemaphores[currentFrame]; // Signal this semaphore when rendering is finished
 
-            vkResetFences(device->Handle(), 1, &inFlightFences[currentFrame]);
-
-            result = vkQueueSubmit(device->GetGraphicsQueue(), 1, &submitInfo, inFlightFences[currentFrame]);
+            vkResetFences(device->Handle(), 1, &inFlightFences[currentFrame]); // Reset this fence before giving it to vkQueueSubmit
+            result = vkQueueSubmit(device->GetGraphicsQueue(), 1, &submitInfo, inFlightFences[currentFrame]); // Signal this CPU fence after all the commands have executed
             if (result != VK_SUCCESS) {
                 if (result == VK_ERROR_DEVICE_LOST) {
                     throw std::runtime_error("vkQueueSubmit(): VK_ERROR_DEVICE_LOST");
@@ -324,6 +322,7 @@ private:
             }
         }
 
+        // printf("imageIndex = %d; currentFrame = %lld\n", imageIndex, currentFrame);
         currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
     }
 };
