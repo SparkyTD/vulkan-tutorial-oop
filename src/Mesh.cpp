@@ -5,6 +5,7 @@
 #include "tiny_obj_loader.h"
 
 #include "VulkanBuffer.h"
+#include "VulkanCommandBuffer.h"
 
 Mesh::Mesh(const char *path) {
     tinyobj::attrib_t attrib;
@@ -45,41 +46,43 @@ Mesh::Mesh(const char *path) {
     }
 }
 
-std::shared_ptr<VulkanBuffer>
-Mesh::CreateIndexBuffer(std::shared_ptr<VulkanCommandPool> commandPool, std::shared_ptr<VulkanInstance> instance, std::shared_ptr<VulkanDevice> device) {
+void Mesh::CreateBuffers(std::shared_ptr<VulkanCommandPool> commandPool, std::shared_ptr<VulkanInstance> instance, std::shared_ptr<VulkanDevice> device) {
+    CreateIndexBuffer(commandPool, instance, device);
+    CreateVertexBuffer(commandPool, instance, device);
+}
+
+void Mesh::CreateIndexBuffer(std::shared_ptr<VulkanCommandPool> commandPool, std::shared_ptr<VulkanInstance> instance, std::shared_ptr<VulkanDevice> device) {
     VkDeviceSize bufferSize = sizeof(indices[0]) * indices.size();
 
     auto stagingBuffer = std::make_shared<VulkanBuffer>(device, instance, bufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
                                                         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-    auto indexBuffer = std::make_shared<VulkanBuffer>(device, instance, bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
-                                                      VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    indexBuffer = std::make_shared<VulkanBuffer>(device, instance, bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+                                                 VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 
     stagingBuffer->CopyFrom(indices.data(), bufferSize);
     stagingBuffer->CopyTo(commandPool, indexBuffer, bufferSize);
-
-    return indexBuffer;
 }
 
-std::shared_ptr<VulkanBuffer>
-Mesh::CreateVertexBuffer(std::shared_ptr<VulkanCommandPool> commandPool, std::shared_ptr<VulkanInstance> instance, std::shared_ptr<VulkanDevice> device) {
+void Mesh::CreateVertexBuffer(std::shared_ptr<VulkanCommandPool> commandPool, std::shared_ptr<VulkanInstance> instance, std::shared_ptr<VulkanDevice> device) {
     VkDeviceSize bufferSize = sizeof(vertices[0]) * vertices.size();
 
     auto stagingBuffer = std::make_shared<VulkanBuffer>(device, instance, bufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
                                                         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-    auto vertexBuffer = std::make_shared<VulkanBuffer>(device, instance, bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-                                                       VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    vertexBuffer = std::make_shared<VulkanBuffer>(device, instance, bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                                                  VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 
     stagingBuffer->CopyFrom(vertices.data(), bufferSize);
     stagingBuffer->CopyTo(commandPool, vertexBuffer, bufferSize);
-
-    return vertexBuffer;
 }
 
-uint32_t Mesh::GetIndexCount() const {
-    return indices.size();
+void Mesh::Bind(std::shared_ptr<VulkanCommandBuffer> commandBuffer) {
+    VkBuffer vertexBuffers[] = {vertexBuffer->Handle()};
+    VkDeviceSize offsets[] = {0};
+    vkCmdBindVertexBuffers(commandBuffer->Handle(), 0, 1, vertexBuffers, offsets);
+    vkCmdBindIndexBuffer(commandBuffer->Handle(), indexBuffer->Handle(), 0, VK_INDEX_TYPE_UINT32);
 }
 
-uint32_t Mesh::GetVertexCount() const {
-    return vertices.size();
+void Mesh::Draw(std::shared_ptr<VulkanCommandBuffer> commandBuffer) {
+    vkCmdDrawIndexed(commandBuffer->Handle(), indices.size(), 1, 0, 0, 0);
 }
 

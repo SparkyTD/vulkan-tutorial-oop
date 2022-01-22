@@ -57,12 +57,11 @@ private:
 
     std::shared_ptr<VulkanImage> colorImage;
     std::shared_ptr<VulkanImage> depthImage;
+
     std::shared_ptr<VulkanImage> textureImage;
     std::shared_ptr<VulkanTextureSampler> textureSampler;
 
     std::shared_ptr<Mesh> mesh;
-    std::shared_ptr<VulkanBuffer> indexBuffer;
-    std::shared_ptr<VulkanBuffer> vertexBuffer;
 
     std::vector<std::shared_ptr<VulkanFramebuffer>> swapChainFramebuffers;
     std::vector<std::shared_ptr<VulkanBuffer>> uniformBuffers;
@@ -102,8 +101,7 @@ private:
         graphicsPipeline = std::make_shared<VulkanGraphicsPipeline>(vertShaderModule, fragShaderModule, renderPass, device, swapChain, descriptorSetBuilder->GetLayout());
 
         mesh = std::make_shared<Mesh>(MODEL_PATH.c_str());
-        indexBuffer = mesh->CreateIndexBuffer(commandPool, instance, device);
-        vertexBuffer = mesh->CreateVertexBuffer(commandPool, instance, device);
+        mesh->CreateBuffers(commandPool, instance, device);
 
         createColorResources();
         createDepthResources();
@@ -196,35 +194,6 @@ private:
             commandBuffers.push_back(commandPool->AllocateBuffer());
     }
 
-    void recordCommandBuffers() {
-        // Each Swap Chain image has its own cmd buffer, so the same list of instructions must be recorded for all of them (Why?)
-        for (size_t i = 0; i < commandBuffers.size(); i++) {
-            commandBuffers[i]->Begin(); // Start recording into the command buffer corresponding to this swap-chain framebuffer
-            {
-                renderPass->Begin(commandBuffers[i], swapChainFramebuffers[i]);
-                {
-                    // Bind the Shader configuration (aka Pipeline)
-                    graphicsPipeline->Bind(commandBuffers[i]);
-
-                    // Bind the Mesh (vertexBuffer, indexBuffer)
-                    VkBuffer vertexBuffers[] = {vertexBuffer->Handle()};
-                    VkDeviceSize offsets[] = {0};
-                    vkCmdBindVertexBuffers(commandBuffers[i]->Handle(), 0, 1, vertexBuffers, offsets);
-                    vkCmdBindIndexBuffer(commandBuffers[i]->Handle(), indexBuffer->Handle(), 0, VK_INDEX_TYPE_UINT32);
-
-                    // Bind the shader descriptor set (aka which resources belong to which shader layout slots)
-                    descriptorSets[i]->Bind(commandBuffers[i], graphicsPipeline);
-
-                    // Main Draw command
-                    vkCmdDrawIndexed(commandBuffers[i]->Handle(), mesh->GetIndexCount(), 1, 0, 0, 0);
-                }
-                renderPass->End(commandBuffers[i]);
-            }
-            // End the recording of this command buffer. Don't submit to GPU yet, just keep it as a "list of instructions" that the render loop will execute each frame
-            commandBuffers[i]->End();
-        }
-    }
-
     void createSyncObjects() {
         imageAvailableSemaphores.resize(MAX_FRAMES_IN_FLIGHT);
         renderFinishedSemaphores.resize(MAX_FRAMES_IN_FLIGHT);
@@ -260,6 +229,32 @@ private:
         ubo.proj[1][1] *= -1;
 
         uniformBuffers[currentImage]->CopyFrom(&ubo, sizeof(ubo));
+    }
+
+    void recordCommandBuffers() {
+        // Each Swap Chain image has its own cmd buffer, so the same list of instructions must be recorded for all of them
+        for (size_t i = 0; i < commandBuffers.size(); i++) {
+            commandBuffers[i]->Begin(); // Start recording into the command buffer corresponding to this swap-chain framebuffer
+            {
+                renderPass->Begin(commandBuffers[i], swapChainFramebuffers[i]);
+                {
+                    // Bind the Shader configuration (aka Pipeline)
+                    graphicsPipeline->Bind(commandBuffers[i]);
+
+                    // Bind the shader descriptor set (aka which resources belong to which shader layout slots)
+                    descriptorSets[i]->Bind(commandBuffers[i], graphicsPipeline);
+
+                    // Bind the Mesh
+                    mesh->Bind(commandBuffers[i]);
+
+                    // Main Draw command
+                    mesh->Draw(commandBuffers[i]);
+                }
+                renderPass->End(commandBuffers[i]);
+            }
+            // End the recording of this command buffer. Don't submit to GPU yet, just keep it as a "list of instructions" that the render loop will execute each frame
+            commandBuffers[i]->End();
+        }
     }
 
     void drawFrame() {

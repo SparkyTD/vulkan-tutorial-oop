@@ -8,17 +8,22 @@ class Mesh {
 public:
     Mesh(const char *path);
 
-    std::shared_ptr<VulkanBuffer> CreateIndexBuffer(std::shared_ptr<VulkanCommandPool> commandPool, std::shared_ptr<VulkanInstance> instance, std::shared_ptr<VulkanDevice> device);
+    void CreateBuffers(std::shared_ptr<VulkanCommandPool> commandPool, std::shared_ptr<VulkanInstance> instance, std::shared_ptr<VulkanDevice> device);
 
-    std::shared_ptr<VulkanBuffer>
-    CreateVertexBuffer(std::shared_ptr<VulkanCommandPool> commandPool, std::shared_ptr<VulkanInstance> instance, std::shared_ptr<VulkanDevice> device);
+    void Bind(std::shared_ptr<VulkanCommandBuffer> commandBuffer);
 
-    uint32_t GetIndexCount() const;
+    void Draw(std::shared_ptr<VulkanCommandBuffer> commandBuffer);
 
-    uint32_t GetVertexCount() const;
+private:
+    void CreateIndexBuffer(std::shared_ptr<VulkanCommandPool> commandPool, std::shared_ptr<VulkanInstance> instance, std::shared_ptr<VulkanDevice> device);
+
+    void CreateVertexBuffer(std::shared_ptr<VulkanCommandPool> commandPool, std::shared_ptr<VulkanInstance> instance, std::shared_ptr<VulkanDevice> device);
 
 private:
     std::vector<Vertex> vertices;
     std::vector<uint32_t> indices;
+
+    std::shared_ptr<VulkanBuffer> vertexBuffer = nullptr;
+    std::shared_ptr<VulkanBuffer> indexBuffer = nullptr;
 };
 
