@@ -10,11 +10,11 @@ public:
 
     ~VulkanSwapChain();
 
-    std::vector<std::shared_ptr<VulkanImage>>& GetImages();
+    void AcquireNextImage();
 
-    std::vector<std::shared_ptr<VulkanImageView>>& GetImageViews();
+    void SubmitCommands(std::shared_ptr<VulkanCommandBuffer> commandBuffer);
 
-    std::shared_ptr<VulkanImage> GetImage(int index);
+    void Present();
 
     std::shared_ptr<VulkanImageView> GetImageView(int index);
 
@@ -24,7 +24,9 @@ public:
 
     VkFormat GetFormat();
 
-    void CreateImageViews();
+    bool IsInvalid() const;
+
+    uint32_t GetCurrentImage() const;
 
 private:
     VkSurfaceFormatKHR ChooseSwapSurfaceFormat(const std::vector<VkSurfaceFormatKHR> &availableFormats);
@@ -34,15 +36,27 @@ private:
     VkExtent2D ChooseSwapExtent(const VkSurfaceCapabilitiesKHR &capabilities);
 
 private:
+    const uint32_t swapImageCount = 2;
+
     std::shared_ptr<VulkanDevice> device;
     std::shared_ptr<VulkanInstance> instance;
     std::shared_ptr<VulkanWindow> window;
 
-private:
     std::vector<std::shared_ptr<VulkanImageView>> imageViews;
     std::vector<std::shared_ptr<VulkanImage>> images;
+
+    std::vector<VkSemaphore> imageAvailableSemaphores;
+    std::vector<VkSemaphore> renderFinishedSemaphores;
+    std::vector<VkFence> inFlightFences;
+
+    uint32_t currentImageIndex = 0;
     VkFormat swapChainImageFormat;
     VkExtent2D swapChainExtent;
+
+    VkResult lastAcquireResult = VK_SUCCESS;
+    VkResult lastSubmitResult = VK_SUCCESS;
+    VkResult lastPresentResult = VK_SUCCESS;
+
 
 VK_HANDLE(VkSwapchainKHR, swapChain);
 };

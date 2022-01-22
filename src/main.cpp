@@ -64,12 +64,6 @@ private:
     std::vector<std::shared_ptr<VulkanDescriptorSet>> descriptorSets;
     std::vector<std::shared_ptr<VulkanCommandBuffer>> commandBuffers;
 
-    std::vector<VkSemaphore> imageAvailableSemaphores;
-    std::vector<VkSemaphore> renderFinishedSemaphores;
-    std::vector<VkFence> inFlightFences;
-    // std::vector<VkFence> imagesInFlight;
-    size_t currentFrame = 0;
-
     void initVulkan() { // TODO
         window = std::make_shared<VulkanWindow>();
         instance = std::make_shared<VulkanInstance>(window);
@@ -104,7 +98,6 @@ private:
 
         createFramebuffers();
         createCommandBuffers();
-        createSyncObjects();
     }
 
     void recreateSwapChain() {
@@ -189,28 +182,6 @@ private:
             commandBuffers.push_back(commandPool->AllocateBuffer());
     }
 
-    void createSyncObjects() {
-        imageAvailableSemaphores.resize(MAX_FRAMES_IN_FLIGHT);
-        renderFinishedSemaphores.resize(MAX_FRAMES_IN_FLIGHT);
-        inFlightFences.resize(MAX_FRAMES_IN_FLIGHT);
-        //imagesInFlight.resize(swapChain->GetImageCount(), VK_NULL_HANDLE);
-
-        VkSemaphoreCreateInfo semaphoreInfo{};
-        semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
-
-        VkFenceCreateInfo fenceInfo{};
-        fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
-        fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
-
-        for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
-            if (vkCreateSemaphore(device->Handle(), &semaphoreInfo, nullptr, &imageAvailableSemaphores[i]) != VK_SUCCESS ||
-                vkCreateSemaphore(device->Handle(), &semaphoreInfo, nullptr, &renderFinishedSemaphores[i]) != VK_SUCCESS ||
-                vkCreateFence(device->Handle(), &fenceInfo, nullptr, &inFlightFences[i]) != VK_SUCCESS) {
-                throw std::runtime_error("failed to create synchronization objects for a frame!");
-            }
-        }
-    }
-
     void updateUniformBuffer(uint32_t currentImage) {
         static auto startTime = std::chrono::high_resolution_clock::now();
 
@@ -253,77 +224,27 @@ private:
     }
 
     void drawFrame() {
-        vkWaitForFences(device->Handle(), 1, &inFlightFences[currentFrame], VK_TRUE, UINT64_MAX);
+        swapChain->AcquireNextImage();
 
-        // Get next image
-        uint32_t imageIndex;
-        VkResult result = vkAcquireNextImageKHR(device->Handle(), swapChain->Handle(), UINT64_MAX, imageAvailableSemaphores[currentFrame], VK_NULL_HANDLE, &imageIndex);
-        // This signals imageAvailableSemaphores[currentFrame] once the image is ready
-
-        if (result == VK_ERROR_OUT_OF_DATE_KHR || window->IsWindowResized(true)) {
+        if (swapChain->IsInvalid() || window->IsWindowResized(true)) {
             recreateSwapChain();
             return;
-        } else if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR) {
-            throw std::runtime_error("failed to acquire swap chain image!");
         }
 
         // Update UBOs and Record Scene
-        {
-            updateUniformBuffer(imageIndex);
-            recordCommandBuffers();
-        }
-
-        // if (imagesInFlight[imageIndex] != VK_NULL_HANDLE) {
-        //     vkWaitForFences(device->Handle(), 1, &imagesInFlight[imageIndex], VK_TRUE, UINT64_MAX);
-        // }
-        // imagesInFlight[imageIndex] = inFlightFences[currentFrame];
+        updateUniformBuffer(swapChain->GetCurrentImage());
+        recordCommandBuffers();
 
         // Submit
-        {
-            auto commandBuffer = commandBuffers[imageIndex]->Handle();
-            VkSubmitInfo submitInfo{};
-            submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-            VkPipelineStageFlags waitStages[] = {VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
-            submitInfo.waitSemaphoreCount = 1;
-            submitInfo.pWaitSemaphores = &imageAvailableSemaphores[currentFrame]; // Wait for vkAcquireNextImageKHR to signal the semaphore
-            submitInfo.pWaitDstStageMask = waitStages;
-            submitInfo.commandBufferCount = 1;
-            submitInfo.pCommandBuffers = &commandBuffer;
-            submitInfo.signalSemaphoreCount = 1;
-            submitInfo.pSignalSemaphores = &renderFinishedSemaphores[currentFrame]; // Signal this semaphore when rendering is finished
-
-            vkResetFences(device->Handle(), 1, &inFlightFences[currentFrame]); // Reset this fence before giving it to vkQueueSubmit
-            result = vkQueueSubmit(device->GetGraphicsQueue(), 1, &submitInfo, inFlightFences[currentFrame]); // Signal this CPU fence after all the commands have executed
-            if (result != VK_SUCCESS) {
-                if (result == VK_ERROR_DEVICE_LOST) {
-                    throw std::runtime_error("vkQueueSubmit(): VK_ERROR_DEVICE_LOST");
-                } else {
-                    throw std::runtime_error("failed to submit draw command buffer!");
-                }
-            }
-        }
+        auto commandBuffer = commandBuffers[swapChain->GetCurrentImage()];
+        swapChain->SubmitCommands(commandBuffer);
 
         // Present
-        {
-            VkPresentInfoKHR presentInfo{};
-            presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
-            presentInfo.waitSemaphoreCount = 1;
-            presentInfo.pWaitSemaphores = &renderFinishedSemaphores[currentFrame]; // Present begins after rendering commands have been executed
-            VkSwapchainKHR swapChains[] = {swapChain->Handle()};
-            presentInfo.swapchainCount = 1;
-            presentInfo.pSwapchains = swapChains;
-            presentInfo.pImageIndices = &imageIndex;
-            result = vkQueuePresentKHR(device->GetPresentQueue(), &presentInfo);
+        swapChain->Present();
 
-            if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR || window->IsWindowResized(true)) {
-                recreateSwapChain();
-            } else if (result != VK_SUCCESS) {
-                throw std::runtime_error("failed to present swap chain image!");
-            }
+        if (swapChain->IsInvalid() || window->IsWindowResized(true)) {
+            recreateSwapChain();
         }
-
-        // printf("imageIndex = %d; currentFrame = %lld\n", imageIndex, currentFrame);
-        currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
     }
 };
 
