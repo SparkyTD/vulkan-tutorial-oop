@@ -10,6 +10,14 @@
 #include <cstdlib>
 #include <cstdint>
 
+#define STB_IMAGE_IMPLEMENTATION
+#define TINYOBJLOADER_IMPLEMENTATION
+
+#include "stb_image.h"
+#include "tiny_obj_loader.h"
+
+#include "vulkan-tutorial/multisampling_29.h"
+
 #include "vk_common.h"
 #include "VulkanWindow.h"
 #include "VulkanInstance.h"
@@ -29,12 +37,13 @@
 #include "VulkanFramebuffer.h"
 #include "Mesh.h"
 
-const std::string MODEL_PATH = "models/viking_room.obj";
-const std::string TEXTURE_PATH = "textures/viking_room.png";
-
-const int MAX_FRAMES_IN_FLIGHT = 2;
+// #include "vulkan-tutorial/multisampling_29.h"
 
 class HelloTriangleApplication {
+private:
+    const std::string MODEL_PATH = "models/viking_room.obj";
+    const std::string TEXTURE_PATH = "textures/viking_room.png";
+
 public:
     void run() {
         initVulkan();
@@ -112,14 +121,14 @@ private:
         swapChain = std::make_shared<VulkanSwapChain>(window, device, instance);
         renderPass = std::make_shared<VulkanRenderPass>(instance, device, swapChain);
 
-        createColorResources();
-        createDepthResources();
-        createFramebuffers();
-
         texturedGraphicsPipeline = std::make_shared<VulkanGraphicsPipeline>(
             std::make_shared<VulkanShader>("shaders/vert.spv", device),
             std::make_shared<VulkanShader>("shaders/frag.spv", device),
             renderPass, device, swapChain, descriptorSetBuilder->GetLayout());
+
+        createColorResources();
+        createDepthResources();
+        createFramebuffers();
     }
 
     void mainLoop() {
@@ -197,47 +206,46 @@ private:
         uniformBuffers[currentImage]->CopyFrom(&ubo, sizeof(ubo));
     }
 
-    void recordCommandBuffers() {
-        // Each Swap Chain image has its own cmd buffer, so the same list of instructions must be recorded for all of them
-        for (size_t i = 0; i < commandBuffers.size(); i++) {
-            commandBuffers[i]->Begin(); // Start recording into the command buffer corresponding to this swap-chain framebuffer
+    void recordCommandBuffers(uint32_t imageIndex) {
+        // commandBuffers[imageIndex]->Reset();
+        commandBuffers[imageIndex]->Begin(false);
+        {
+            renderPass->Begin(commandBuffers[imageIndex], swapChainFramebuffers[imageIndex]);
             {
-                renderPass->Begin(commandBuffers[i], swapChainFramebuffers[i]);
-                {
-                    // Bind the Shader configuration (aka Pipeline)
-                    texturedGraphicsPipeline->Bind(commandBuffers[i]);
+                // Bind the Shader configuration (aka Pipeline)
+                texturedGraphicsPipeline->Bind(commandBuffers[imageIndex]);
 
-                    // Bind the shader descriptor set (aka which resources belong to which shader layout slots)
-                    descriptorSets[i]->Bind(commandBuffers[i], texturedGraphicsPipeline);
+                // Bind the shader descriptor set (aka which resources belong to which shader layout slots)
+                descriptorSets[0]->Bind(commandBuffers[imageIndex], texturedGraphicsPipeline);
 
-                    // Bind the Mesh
-                    mesh->Bind(commandBuffers[i]);
+                // Bind the Mesh
+                mesh->Bind(commandBuffers[imageIndex]);
 
-                    // Main Draw command
-                    mesh->Draw(commandBuffers[i]);
-                }
-                renderPass->End(commandBuffers[i]);
+                // Main Draw command
+                mesh->Draw(commandBuffers[imageIndex]);
             }
-            // End the recording of this command buffer. Don't submit to GPU yet, just keep it as a "list of instructions" that the render loop will execute each frame
-            commandBuffers[i]->End();
+            renderPass->End(commandBuffers[imageIndex]);
         }
+        commandBuffers[imageIndex]->End();
     }
 
     void drawFrame() {
+        swapChain->WaitForLastSubmit();
+        // vkResetCommandBuffer(commandBuffers[currentImage]->Handle(), VK_COMMAND_BUFFER_RESET_RELEASE_RESOURCES_BIT);
+
         swapChain->AcquireNextImage();
+        int currentImage = swapChain->GetCurrentImage();
+
+        updateUniformBuffer(currentImage);
+        recordCommandBuffers(currentImage);
 
         if (swapChain->IsInvalid() || window->IsWindowResized(true)) {
             recreateSwapChain();
             return;
         }
 
-        // Update UBOs and Record Scene
-        updateUniformBuffer(swapChain->GetCurrentImage());
-        recordCommandBuffers();
-
         // Submit
-        auto commandBuffer = commandBuffers[swapChain->GetCurrentImage()];
-        swapChain->SubmitCommands(commandBuffer);
+        swapChain->SubmitCommands(commandBuffers[currentImage]);
 
         // Present
         swapChain->Present();
@@ -248,11 +256,18 @@ private:
     }
 };
 
-int main() {
+int main(int argc, char **argv) {
+
+    bool runApp29 = argc >= 2 && strcmp(argv[1], "-app29") == 0;
+
+    VulkanTutorial::multisampling_29 app29;
     HelloTriangleApplication app;
 
     try {
-        app.run();
+        if (runApp29)
+            app29.run();
+        else
+            app.run();
     } catch (const std::exception &e) {
         std::cerr << e.what() << std::endl;
         return EXIT_FAILURE;

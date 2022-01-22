@@ -8,6 +8,7 @@ VulkanCommandPool::VulkanCommandPool(QueueFamily queueFamily, std::shared_ptr<Vu
 
     VkCommandPoolCreateInfo poolInfo{};
     poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+    poolInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
     poolInfo.queueFamilyIndex = instance->GetQueueFamilyIndex(queueFamily);
 
     if (vkCreateCommandPool(device->Handle(), &poolInfo, nullptr, &commandPool) != VK_SUCCESS) {

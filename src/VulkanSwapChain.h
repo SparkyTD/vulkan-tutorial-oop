@@ -10,6 +10,8 @@ public:
 
     ~VulkanSwapChain();
 
+    void WaitForLastSubmit();
+
     void AcquireNextImage();
 
     void SubmitCommands(std::shared_ptr<VulkanCommandBuffer> commandBuffer);

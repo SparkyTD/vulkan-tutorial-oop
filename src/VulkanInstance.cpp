@@ -3,7 +3,7 @@
 
 const std::vector<const char *> VulkanInstance::ValidationLayers = {"VK_LAYER_KHRONOS_validation"};
 const std::vector<const char *> VulkanInstance::DeviceExtensions = {VK_KHR_SWAPCHAIN_EXTENSION_NAME};
-const bool VulkanInstance::EnableValidationLayers = false;
+const bool VulkanInstance::EnableValidationLayers = true;
 VkSampleCountFlagBits VulkanInstance::MsaaSamples = VK_SAMPLE_COUNT_1_BIT;
 
 VulkanInstance::VulkanInstance(std::shared_ptr<VulkanWindow> window_) : window(window_) {
@@ -100,7 +100,18 @@ void VulkanInstance::PopulateDebugMessengerCreateInfo(VkDebugUtilsMessengerCreat
     createInfo.pfnUserCallback = DebugCallback;
 }
 
-VkBool32 VulkanInstance::DebugCallback(VkDebugUtilsMessageSeverityFlagBitsEXT, VkDebugUtilsMessageTypeFlagsEXT, const VkDebugUtilsMessengerCallbackDataEXT *, void *) {
+VkBool32
+VulkanInstance::DebugCallback(VkDebugUtilsMessageSeverityFlagBitsEXT severity, VkDebugUtilsMessageTypeFlagsEXT type,
+                              const VkDebugUtilsMessengerCallbackDataEXT *message, void *) {
+    if (severity == VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT || severity == VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT)
+        return VK_FALSE;
+    if(type != VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT && type != VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT)
+        return VK_FALSE;
+
+    if (severity == VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT)
+        fprintf(stderr, ">> %s\n", message->pMessage);
+    else
+        printf(">> %s\n", message->pMessage);
     return VK_FALSE;
 }
 
@@ -288,9 +299,9 @@ VulkanInstance::~VulkanInstance() {
 
 uint32_t VulkanInstance::GetQueueFamilyIndex(QueueFamily queueFamily) {
     QueueFamilyIndices queueFamilyIndices = FindQueueFamilies();
-    if(queueFamily == QueueFamily::Graphics)
+    if (queueFamily == QueueFamily::Graphics)
         return queueFamilyIndices.graphicsFamily.value();
-    if(queueFamily == QueueFamily::Present)
+    if (queueFamily == QueueFamily::Present)
         return queueFamilyIndices.presentFamily.value();
 
     throw std::runtime_error("Queue type not supported");

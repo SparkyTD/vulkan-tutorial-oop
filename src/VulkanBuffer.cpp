@@ -43,7 +43,7 @@ VulkanBuffer::~VulkanBuffer() {
 }
 
 void VulkanBuffer::CopyTo(std::shared_ptr<VulkanCommandPool> commandPool, std::shared_ptr<VulkanBuffer> destination, VkDeviceSize size_) {
-    auto commandBuffer = commandPool->AllocateBuffer()->Begin();
+    auto commandBuffer = commandPool->AllocateBuffer()->Begin(true);
 
     VkBufferCopy copyRegion{};
     copyRegion.size = size_;
@@ -62,7 +62,7 @@ void VulkanBuffer::CopyFrom(void *inputData, int length) {
 }
 
 void VulkanBuffer::CopyTo(std::shared_ptr<VulkanCommandPool> commandPool, std::shared_ptr<VulkanImage> destination) {
-    auto commandBuffer = commandPool->AllocateBuffer()->Begin();
+    auto commandBuffer = commandPool->AllocateBuffer()->Begin(true);
 
     uint32_t width, height;
     destination->GetSize(width, height);

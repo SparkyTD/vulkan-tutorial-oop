@@ -1,8 +1,5 @@
 #include "VulkanImage.h"
 
-#define STB_IMAGE_IMPLEMENTATION
-
-#include "stb_image.h"
 #include "VulkanImageView.h"
 #include "VulkanInstance.h"
 #include "VulkanDevice.h"
@@ -10,7 +7,9 @@
 #include "VulkanCommandBuffer.h"
 #include "VulkanTextureSampler.h"
 
-VulkanImage::VulkanImage(VkImage image_, std::shared_ptr<VulkanDevice> device_) : image(image_), device(device_) {
+#include "lib_common.h"
+
+VulkanImage::VulkanImage(VkImage image_, std::shared_ptr<VulkanDevice> device_) : image(image_), device(device_), mipLevels(1) {
 
 }
 
@@ -29,7 +28,7 @@ VulkanImage::VulkanImage(std::shared_ptr<VulkanInstance> instance_, std::shared_
 }
 
 std::shared_ptr<VulkanImage> VulkanImage::LoadFrom(const char *path, std::shared_ptr<VulkanInstance> instance, std::shared_ptr<VulkanDevice> device,
-                                                    std::shared_ptr<VulkanCommandPool> commandPool) {
+                                                   std::shared_ptr<VulkanCommandPool> commandPool) {
 
     int texWidth, texHeight, texChannels;
     stbi_uc *pixels = stbi_load(path, &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
@@ -48,7 +47,7 @@ std::shared_ptr<VulkanImage> VulkanImage::LoadFrom(const char *path, std::shared
                                                       VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
                                                       VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, true);
 
-    auto commandBuffer = commandPool->AllocateBuffer()->Begin();
+    auto commandBuffer = commandPool->AllocateBuffer()->Begin(true);
     textureImage->ChangeLayout(commandBuffer, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
     commandBuffer->EndAndSubmit();
 
@@ -150,7 +149,7 @@ void VulkanImage::GenerateMipMaps(std::shared_ptr<VulkanCommandPool> commandPool
         throw std::runtime_error("texture image format does not support linear blitting!");
     }
 
-    auto commandBuffer = commandPool->AllocateBuffer()->Begin();
+    auto commandBuffer = commandPool->AllocateBuffer()->Begin(true);
 
     VkImageMemoryBarrier barrier{};
     barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;

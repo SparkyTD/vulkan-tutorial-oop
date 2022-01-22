@@ -134,8 +134,11 @@ VkFormat VulkanSwapChain::GetFormat() {
     return swapChainImageFormat;
 }
 
-void VulkanSwapChain::AcquireNextImage() {
+void VulkanSwapChain::WaitForLastSubmit() {
     vkWaitForFences(device->Handle(), 1, &inFlightFences[currentImageIndex], VK_TRUE, UINT64_MAX);
+}
+
+void VulkanSwapChain::AcquireNextImage() {
     lastAcquireResult = vkAcquireNextImageKHR(device->Handle(), swapChain, UINT64_MAX, imageAvailableSemaphores[currentImageIndex], VK_NULL_HANDLE, &currentImageIndex);
 
     if (lastAcquireResult != VK_SUCCESS && lastAcquireResult != VK_SUBOPTIMAL_KHR) {
