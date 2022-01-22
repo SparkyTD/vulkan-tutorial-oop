@@ -1,8 +1,12 @@
 #include "VulkanImage.h"
 
+#define STB_IMAGE_IMPLEMENTATION
+
+#include "stb_image.h"
 #include "VulkanImageView.h"
 #include "VulkanInstance.h"
 #include "VulkanDevice.h"
+#include "VulkanBuffer.h"
 #include "VulkanCommandBuffer.h"
 #include "VulkanTextureSampler.h"
 
@@ -13,45 +17,45 @@ VulkanImage::VulkanImage(VkImage image_, std::shared_ptr<VulkanDevice> device_) 
 VulkanImage::VulkanImage(std::shared_ptr<VulkanInstance> instance_, std::shared_ptr<VulkanDevice> device_,
                          uint32_t width_, uint32_t height_, VkSampleCountFlagBits numSamples, VkFormat format_,
                          VkImageTiling tiling, VkImageUsageFlags usage,
-                         VkMemoryPropertyFlags properties, bool useMipLevels) : device(device_), format(format_), width(width_), height(height_), instance(instance_) {
+                         VkMemoryPropertyFlags properties, bool useMipLevels)
+    : device(device_), format(format_), width(width_), height(height_), instance(instance_) {
 
     if (useMipLevels)
         mipLevels = static_cast<uint32_t>(std::floor(std::log2(std::max(width, height)))) + 1;
     else
         mipLevels = 1;
 
-    VkImageCreateInfo imageInfo{};
-    imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-    imageInfo.imageType = VK_IMAGE_TYPE_2D;
-    imageInfo.extent.width = width;
-    imageInfo.extent.height = height;
-    imageInfo.extent.depth = 1;
-    imageInfo.mipLevels = mipLevels;
-    imageInfo.arrayLayers = 1;
-    imageInfo.format = format;
-    imageInfo.tiling = tiling;
-    imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    imageInfo.usage = usage;
-    imageInfo.samples = numSamples;
-    imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    CreateImageInternal(width, height, numSamples, format, tiling, usage, properties, mipLevels);
+}
 
-    if (vkCreateImage(device->Handle(), &imageInfo, nullptr, &image) != VK_SUCCESS) {
-        throw std::runtime_error("failed to create image!");
+std::shared_ptr<VulkanImage> VulkanImage::LoadFrom(const char *path, std::shared_ptr<VulkanInstance> instance, std::shared_ptr<VulkanDevice> device,
+                                                    std::shared_ptr<VulkanCommandPool> commandPool) {
+
+    int texWidth, texHeight, texChannels;
+    stbi_uc *pixels = stbi_load(path, &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
+    VkDeviceSize imageSize = texWidth * texHeight * 4;
+
+    if (!pixels) {
+        throw std::runtime_error("failed to load texture image!");
     }
 
-    VkMemoryRequirements memRequirements;
-    vkGetImageMemoryRequirements(device->Handle(), image, &memRequirements);
+    auto stagingBuffer = std::make_shared<VulkanBuffer>(device, instance, imageSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                                                        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    stagingBuffer->CopyFrom(pixels, static_cast<size_t>(imageSize));
+    stbi_image_free(pixels);
 
-    VkMemoryAllocateInfo allocInfo{};
-    allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    allocInfo.allocationSize = memRequirements.size;
-    allocInfo.memoryTypeIndex = FindMemoryType(instance, memRequirements.memoryTypeBits, properties);
+    auto textureImage = std::make_shared<VulkanImage>(instance, device, texWidth, texHeight, VK_SAMPLE_COUNT_1_BIT, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_TILING_OPTIMAL,
+                                                      VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                                                      VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, true);
 
-    if (vkAllocateMemory(device->Handle(), &allocInfo, nullptr, &imageMemory) != VK_SUCCESS) {
-        throw std::runtime_error("failed to allocate image memory!");
-    }
+    auto commandBuffer = commandPool->AllocateBuffer()->Begin();
+    textureImage->ChangeLayout(commandBuffer, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+    commandBuffer->EndAndSubmit();
 
-    vkBindImageMemory(device->Handle(), image, imageMemory, 0);
+    stagingBuffer->CopyTo(commandPool, textureImage);
+
+    textureImage->GenerateMipMaps(commandPool);
+    return textureImage;
 }
 
 std::shared_ptr<VulkanImageView> VulkanImage::GetView(VkFormat format, VkImageAspectFlags aspectFlags) {
@@ -224,6 +228,38 @@ void VulkanImage::GenerateMipMaps(std::shared_ptr<VulkanCommandPool> commandPool
     commandBuffer->EndAndSubmit();
 }
 
-std::shared_ptr<VulkanTextureSampler> VulkanImage::CreateSampler() {
-    return std::make_shared<VulkanTextureSampler>(instance, device, mipLevels);
+void VulkanImage::CreateImageInternal(uint32_t width_, uint32_t height_, VkSampleCountFlagBits numSamples, VkFormat format_,
+                                      VkImageTiling tiling, VkImageUsageFlags usage, VkMemoryPropertyFlags properties, int mipLevels_) {
+    VkImageCreateInfo imageInfo{};
+    imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    imageInfo.imageType = VK_IMAGE_TYPE_2D;
+    imageInfo.extent.width = width_;
+    imageInfo.extent.height = height_;
+    imageInfo.extent.depth = 1;
+    imageInfo.mipLevels = mipLevels_;
+    imageInfo.arrayLayers = 1;
+    imageInfo.format = format_;
+    imageInfo.tiling = tiling;
+    imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    imageInfo.usage = usage;
+    imageInfo.samples = numSamples;
+    imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+    if (vkCreateImage(device->Handle(), &imageInfo, nullptr, &image) != VK_SUCCESS) {
+        throw std::runtime_error("failed to create image!");
+    }
+
+    VkMemoryRequirements memRequirements;
+    vkGetImageMemoryRequirements(device->Handle(), image, &memRequirements);
+
+    VkMemoryAllocateInfo allocInfo{};
+    allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    allocInfo.allocationSize = memRequirements.size;
+    allocInfo.memoryTypeIndex = FindMemoryType(instance, memRequirements.memoryTypeBits, properties);
+
+    if (vkAllocateMemory(device->Handle(), &allocInfo, nullptr, &imageMemory) != VK_SUCCESS) {
+        throw std::runtime_error("failed to allocate image memory!");
+    }
+
+    vkBindImageMemory(device->Handle(), image, imageMemory, 0);
 }

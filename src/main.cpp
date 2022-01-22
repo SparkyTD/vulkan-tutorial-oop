@@ -6,20 +6,13 @@
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
 #define GLM_ENABLE_EXPERIMENTAL
 
-#define STB_IMAGE_IMPLEMENTATION
-
-#include "stb_image.h"
-
 #include <iostream>
-#include <fstream>
 #include <stdexcept>
 #include <algorithm>
 #include <chrono>
 #include <vector>
 #include <cstdlib>
 #include <cstdint>
-#include <array>
-#include <unordered_map>
 
 #include "vk_common.h"
 #include "VulkanWindow.h"
@@ -89,11 +82,11 @@ private:
         swapChain = std::make_shared<VulkanSwapChain>(window, device, instance);
         renderPass = std::make_shared<VulkanRenderPass>(instance, device, swapChain);
         commandPool = std::make_shared<VulkanCommandPool>(QueueFamily::Graphics, device, instance);
+        textureSampler = std::make_shared<VulkanTextureSampler>(instance, device);
 
         createUniformBuffers();
-        createTextureImage();
 
-        textureSampler = textureImage->CreateSampler();
+        textureImage = VulkanImage::LoadFrom(TEXTURE_PATH.c_str(), instance, device, commandPool);
 
         descriptorSetBuilder = std::make_shared<VulkanDescriptorSetBuilder>(device, swapChain->GetImageCount());
         descriptorSetBuilder->AddLayoutSlot(ShaderStage::Vertex, 0, ShaderResourceType::UniformBuffer, 1);
@@ -185,33 +178,6 @@ private:
         depthImage = std::make_shared<VulkanImage>(instance, device, swapChain->GetExtent().width, swapChain->GetExtent().height, VulkanInstance::MsaaSamples,
                                                    renderPass->FindDepthFormat(), VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
                                                    VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, false);
-    }
-
-    void createTextureImage() {
-        int texWidth, texHeight, texChannels;
-        stbi_uc *pixels = stbi_load(TEXTURE_PATH.c_str(), &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
-        VkDeviceSize imageSize = texWidth * texHeight * 4;
-
-        if (!pixels) {
-            throw std::runtime_error("failed to load texture image!");
-        }
-
-        auto stagingBuffer = std::make_shared<VulkanBuffer>(device, instance, imageSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-                                                            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-        stagingBuffer->CopyFrom(pixels, static_cast<size_t>(imageSize));
-        stbi_image_free(pixels);
-
-        textureImage = std::make_shared<VulkanImage>(instance, device, texWidth, texHeight, VK_SAMPLE_COUNT_1_BIT, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_TILING_OPTIMAL,
-                                                     VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-                                                     VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, true);
-
-        auto commandBuffer = commandPool->AllocateBuffer()->Begin();
-        textureImage->ChangeLayout(commandBuffer, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
-        commandBuffer->EndAndSubmit();
-
-        stagingBuffer->CopyTo(commandPool, textureImage);
-
-        textureImage->GenerateMipMaps(commandPool);
     }
 
     void createUniformBuffers() {

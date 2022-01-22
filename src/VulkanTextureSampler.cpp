@@ -2,8 +2,8 @@
 #include "VulkanInstance.h"
 #include "VulkanDevice.h"
 
-VulkanTextureSampler::VulkanTextureSampler(std::shared_ptr<VulkanInstance> instance_, std::shared_ptr<VulkanDevice> device_, int mipLevels_)
-    : instance(instance_), device(device_), mipLevels(mipLevels_) {
+VulkanTextureSampler::VulkanTextureSampler(std::shared_ptr<VulkanInstance> instance_, std::shared_ptr<VulkanDevice> device_)
+    : instance(instance_), device(device_) {
 
     VkPhysicalDeviceProperties properties{};
     vkGetPhysicalDeviceProperties(instance->PhysicalDeviceHandle(), &properties);
@@ -23,7 +23,7 @@ VulkanTextureSampler::VulkanTextureSampler(std::shared_ptr<VulkanInstance> insta
     samplerInfo.compareOp = VK_COMPARE_OP_ALWAYS;
     samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
     samplerInfo.minLod = 0.0f;
-    samplerInfo.maxLod = static_cast<float>(mipLevels);
+    samplerInfo.maxLod = VK_LOD_CLAMP_NONE; // TODO MipMap level was fed in here when the Image created the sampler
     samplerInfo.mipLodBias = 0.0f;
 
     if (vkCreateSampler(device->Handle(), &samplerInfo, nullptr, &textureSampler) != VK_SUCCESS) {
