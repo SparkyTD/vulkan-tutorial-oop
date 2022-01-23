@@ -1711,7 +1711,7 @@ bool LoadObj(attrib_t *attrib, std::vector<shape_t> *shapes,
                                     triangulate);
   // exportFaceGroupToShape return false when `usemtl` is called in the last
   // line.
-  // we also add `shape` to `shapes` when `shape.mesh` has already some
+  // we also add `shape` to `shapes` when `shape.roomMesh` has already some
   // faces(indices)
   if (ret || shape.mesh.indices.size()) {
     shapes->push_back(shape);

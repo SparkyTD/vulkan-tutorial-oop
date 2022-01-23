@@ -37,11 +37,10 @@
 #include "VulkanFramebuffer.h"
 #include "Mesh.h"
 
-// #include "vulkan-tutorial/multisampling_29.h"
-
 class HelloTriangleApplication {
 private:
-    const std::string MODEL_PATH = "models/viking_room.obj";
+    const std::string CUBE_MODEL_PATH = "models/cube.obj";
+    const std::string ROOM_MODEL_PATH = "models/viking_room.obj";
     const std::string TEXTURE_PATH = "textures/viking_room.png";
 
 public:
@@ -66,7 +65,8 @@ private:
     std::shared_ptr<VulkanImage> textureImage;
     std::shared_ptr<VulkanTextureSampler> textureSampler;
 
-    std::shared_ptr<Mesh> mesh;
+    std::shared_ptr<Mesh> roomMesh;
+    std::shared_ptr<Mesh> cubeMesh;
 
     std::vector<std::shared_ptr<VulkanFramebuffer>> swapChainFramebuffers;
     std::vector<std::shared_ptr<VulkanBuffer>> uniformBuffers;
@@ -99,8 +99,11 @@ private:
             std::make_shared<VulkanShader>("shaders/frag.spv", device),
             renderPass, device, swapChain, descriptorSetBuilder->GetLayout());
 
-        mesh = std::make_shared<Mesh>(MODEL_PATH.c_str());
-        mesh->CreateBuffers(commandPool, instance, device);
+        roomMesh = std::make_shared<Mesh>(ROOM_MODEL_PATH.c_str());
+        roomMesh->CreateBuffers(commandPool, instance, device);
+
+        cubeMesh = std::make_shared<Mesh>(CUBE_MODEL_PATH.c_str());
+        cubeMesh->CreateBuffers(commandPool, instance, device);
 
         createColorResources();
         createDepthResources();
@@ -219,10 +222,9 @@ private:
                 descriptorSets[0]->Bind(commandBuffers[imageIndex], texturedGraphicsPipeline);
 
                 // Bind the Mesh
-                mesh->Bind(commandBuffers[imageIndex]);
-
+                roomMesh->Bind(commandBuffers[imageIndex]);
                 // Main Draw command
-                mesh->Draw(commandBuffers[imageIndex]);
+                roomMesh->Draw(commandBuffers[imageIndex]);
             }
             renderPass->End(commandBuffers[imageIndex]);
         }
@@ -231,9 +233,8 @@ private:
 
     void drawFrame() {
         swapChain->WaitForLastSubmit();
-        // vkResetCommandBuffer(commandBuffers[imageIndex]->Handle(), VK_COMMAND_BUFFER_RESET_RELEASE_RESOURCES_BIT);
-
         int imageIndex = swapChain->AcquireNextImage();
+        commandBuffers[imageIndex]->Reset();
 
         updateUniformBuffer(imageIndex);
         recordCommandBuffers(imageIndex);

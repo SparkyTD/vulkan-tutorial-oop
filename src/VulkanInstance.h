@@ -1,6 +1,7 @@
 #pragma once
 
 #include "vk_common.h"
+#include "VkValidationClient.h"
 
 class VulkanInstance {
     VK_NON_COPIABLE(VulkanInstance)
@@ -65,6 +66,9 @@ private:
     VkDebugUtilsMessengerEXT debugMessenger;
     VkSurfaceKHR surface;
     VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
+
+    static VkValidationClient debugClient;
+
 VK_HANDLE(VkInstance, instance);
 };
 

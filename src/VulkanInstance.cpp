@@ -6,7 +6,11 @@ const std::vector<const char *> VulkanInstance::DeviceExtensions = {VK_KHR_SWAPC
 const bool VulkanInstance::EnableValidationLayers = true;
 VkSampleCountFlagBits VulkanInstance::MsaaSamples = VK_SAMPLE_COUNT_1_BIT;
 
+VkValidationClient VulkanInstance::debugClient;
+
 VulkanInstance::VulkanInstance(std::shared_ptr<VulkanWindow> window_) : window(window_) {
+    debugClient.Connect();
+
     if (EnableValidationLayers && !CheckValidationLayerSupport()) {
         throw std::runtime_error("validation layers requested, but not available!");
     }
@@ -103,9 +107,13 @@ void VulkanInstance::PopulateDebugMessengerCreateInfo(VkDebugUtilsMessengerCreat
 VkBool32
 VulkanInstance::DebugCallback(VkDebugUtilsMessageSeverityFlagBitsEXT severity, VkDebugUtilsMessageTypeFlagsEXT type,
                               const VkDebugUtilsMessengerCallbackDataEXT *message, void *) {
+
+    if (type == VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT || type == VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT)
+        debugClient.SendDebugMessage(severity, type, message);
+
     if (severity == VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT || severity == VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT)
         return VK_FALSE;
-    if(type != VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT && type != VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT)
+    if (type != VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT && type != VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT)
         return VK_FALSE;
 
     if (severity == VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT)
