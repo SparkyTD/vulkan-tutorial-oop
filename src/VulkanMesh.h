@@ -2,11 +2,11 @@
 
 #include "vk_common.h"
 
-class Mesh {
-    VK_NON_COPIABLE(Mesh)
+class VulkanMesh {
+    VK_NON_COPIABLE(VulkanMesh)
 
 public:
-    Mesh(const char *path);
+    VulkanMesh(const char *path);
 
     void CreateBuffers(std::shared_ptr<VulkanCommandPool> commandPool, std::shared_ptr<VulkanInstance> instance, std::shared_ptr<VulkanDevice> device);
 

@@ -3,7 +3,7 @@
 
 const std::vector<const char *> VulkanInstance::ValidationLayers = {"VK_LAYER_KHRONOS_validation"};
 const std::vector<const char *> VulkanInstance::DeviceExtensions = {VK_KHR_SWAPCHAIN_EXTENSION_NAME};
-const bool VulkanInstance::EnableValidationLayers = true;
+const bool VulkanInstance::EnableValidationLayers = false;
 VkSampleCountFlagBits VulkanInstance::MsaaSamples = VK_SAMPLE_COUNT_1_BIT;
 
 VkValidationClient VulkanInstance::debugClient;
@@ -21,7 +21,7 @@ VulkanInstance::VulkanInstance(std::shared_ptr<VulkanWindow> window_) : window(w
     appInfo.applicationVersion = VK_MAKE_VERSION(1, 0, 0);
     appInfo.pEngineName = "No Engine";
     appInfo.engineVersion = VK_MAKE_VERSION(1, 0, 0);
-    appInfo.apiVersion = VK_API_VERSION_1_0;
+    appInfo.apiVersion = VK_API_VERSION_1_2;
 
     VkInstanceCreateInfo createInfo{};
     createInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
@@ -48,11 +48,12 @@ VulkanInstance::VulkanInstance(std::shared_ptr<VulkanWindow> window_) : window(w
         throw std::runtime_error("failed to create instance!");
     }
 
+    SetupDebugMessenger();
+
     if (glfwCreateWindowSurface(instance, window->Handle(), nullptr, &surface) != VK_SUCCESS) {
         throw std::runtime_error("failed to create window surface!");
     }
 
-    SetupDebugMessenger();
     PickPhysicalDevice();
 }
 
@@ -285,10 +286,6 @@ SwapChainSupportDetails VulkanInstance::QuerySwapChainSupport(VkPhysicalDevice d
 
 SwapChainSupportDetails VulkanInstance::QuerySwapChainSupport() {
     return QuerySwapChainSupport(physicalDevice);
-}
-
-VkInstance VulkanInstance::InstanceHandle() {
-    return instance;
 }
 
 VkPhysicalDevice VulkanInstance::PhysicalDeviceHandle() {

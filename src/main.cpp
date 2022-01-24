@@ -35,7 +35,14 @@
 #include "VulkanDescriptorSet.h"
 #include "VulkanTextureSampler.h"
 #include "VulkanFramebuffer.h"
-#include "Mesh.h"
+#include "VulkanMesh.h"
+
+#include <immintrin.h>
+#include <xmmintrin.h>
+
+glm::mat4 quatToMat(glm::vec4 q);
+glm::vec4 angleAxisToQuat(float angle, glm::vec3 axis);
+glm::vec4 lookAt(glm::vec3 eye, glm::vec3 center);
 
 class HelloTriangleApplication {
 private:
@@ -65,8 +72,8 @@ private:
     std::shared_ptr<VulkanImage> textureImage;
     std::shared_ptr<VulkanTextureSampler> textureSampler;
 
-    std::shared_ptr<Mesh> roomMesh;
-    std::shared_ptr<Mesh> cubeMesh;
+    std::shared_ptr<VulkanMesh> roomMesh;
+    std::shared_ptr<VulkanMesh> cubeMesh;
 
     std::vector<std::shared_ptr<VulkanFramebuffer>> swapChainFramebuffers;
     std::vector<std::shared_ptr<VulkanBuffer>> uniformBuffers;
@@ -76,13 +83,12 @@ private:
     void initVulkan() { // TODO
         window = std::make_shared<VulkanWindow>();
         instance = std::make_shared<VulkanInstance>(window);
+
         device = std::make_shared<VulkanDevice>(instance);
-        swapChain = std::make_shared<VulkanSwapChain>(window, device, instance);
-        renderPass = std::make_shared<VulkanRenderPass>(instance, device, swapChain);
         commandPool = std::make_shared<VulkanCommandPool>(QueueFamily::Graphics, device, instance);
         textureSampler = std::make_shared<VulkanTextureSampler>(instance, device);
-        textureImage = VulkanImage::LoadFrom(TEXTURE_PATH.c_str(), instance, device, commandPool);
 
+        loadResources();
         createUniformBuffers();
 
         descriptorSetBuilder = std::make_shared<VulkanDescriptorSetBuilder>(device, swapChain->GetImageCount());
@@ -94,44 +100,41 @@ private:
             descriptorSets[i]->WriteImage(1, textureSampler, textureImage->GetView(VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_ASPECT_COLOR_BIT));
         }
 
-        texturedGraphicsPipeline = std::make_shared<VulkanGraphicsPipeline>(
-            std::make_shared<VulkanShader>("shaders/vert.spv", device),
-            std::make_shared<VulkanShader>("shaders/frag.spv", device),
-            renderPass, device, swapChain, descriptorSetBuilder->GetLayout());
-
-        roomMesh = std::make_shared<Mesh>(ROOM_MODEL_PATH.c_str());
-        roomMesh->CreateBuffers(commandPool, instance, device);
-
-        cubeMesh = std::make_shared<Mesh>(CUBE_MODEL_PATH.c_str());
-        cubeMesh->CreateBuffers(commandPool, instance, device);
-
-        createColorResources();
-        createDepthResources();
-
+        createGraphicsPipeline();
+        createFramebufferResources();
         createFramebuffers();
+
         createCommandBuffers();
     }
 
     void recreateSwapChain() {
-        int width = 0, height = 0;
-        window->GetFramebufferSize(width, height);
-        while (width == 0 || height == 0) {
-            window->GetFramebufferSize(width, height);
-            window->WaitForEvents();
-        }
-
-        device->WaitIdle();
         swapChain = std::make_shared<VulkanSwapChain>(window, device, instance);
         renderPass = std::make_shared<VulkanRenderPass>(instance, device, swapChain);
 
+        createGraphicsPipeline();
+        createFramebufferResources();
+        createFramebuffers();
+        createCommandBuffers();
+    }
+
+    void createGraphicsPipeline() {
         texturedGraphicsPipeline = std::make_shared<VulkanGraphicsPipeline>(
             std::make_shared<VulkanShader>("shaders/vert.spv", device),
             std::make_shared<VulkanShader>("shaders/frag.spv", device),
             renderPass, device, swapChain, descriptorSetBuilder->GetLayout());
+    }
 
-        createColorResources();
-        createDepthResources();
-        createFramebuffers();
+    void loadResources() {
+        textureImage = VulkanImage::LoadFrom(TEXTURE_PATH.c_str(), instance, device, commandPool);
+
+        roomMesh = std::make_shared<VulkanMesh>(ROOM_MODEL_PATH.c_str());
+        roomMesh->CreateBuffers(commandPool, instance, device);
+
+        cubeMesh = std::make_shared<VulkanMesh>(CUBE_MODEL_PATH.c_str());
+        cubeMesh->CreateBuffers(commandPool, instance, device);
+
+        swapChain = std::make_shared<VulkanSwapChain>(window, device, instance);
+        renderPass = std::make_shared<VulkanRenderPass>(instance, device, swapChain);
     }
 
     void mainLoop() {
@@ -166,13 +169,10 @@ private:
         }
     }
 
-    void createColorResources() {
+    void createFramebufferResources() {
         colorImage = std::make_shared<VulkanImage>(instance, device, swapChain->GetExtent().width, swapChain->GetExtent().height, VulkanInstance::MsaaSamples,
                                                    swapChain->GetFormat(), VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
                                                    VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, false);
-    }
-
-    void createDepthResources() {
         depthImage = std::make_shared<VulkanImage>(instance, device, swapChain->GetExtent().width, swapChain->GetExtent().height, VulkanInstance::MsaaSamples,
                                                    renderPass->FindDepthFormat(), VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
                                                    VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, false);
@@ -201,10 +201,13 @@ private:
         float time = std::chrono::duration<float, std::chrono::seconds::period>(currentTime - startTime).count() * 0.1f;
 
         UniformBufferObject ubo{};
-        ubo.model = glm::rotate(glm::mat4(1.0f), time * glm::radians(90.0f), glm::vec3(0.0f, 0.0f, 1.0f));
-        ubo.view = glm::lookAt(glm::vec3(2.0f, 2.0f, 2.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+        ubo.model = glm::rotate(glm::identity<glm::mat4>(), time * glm::radians(90.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+        ubo.view = glm::lookAt(glm::vec3(2.0f, 2.0f, 2.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+        //ubo.view = glm::translate(quatToMat(lookAt(glm::vec3(2.0f, 2.0f, 2.0f), glm::vec3(0.0f, 0.0f, 0.0f))) ,glm::vec3(2.0f, 2.0f, 2.0f));
         ubo.proj = glm::perspective(glm::radians(45.0f), swapChain->GetExtent().width / (float) swapChain->GetExtent().height, 0.1f, 10.0f);
         ubo.proj[1][1] *= -1;
+
+        glm::inverse(ubo.model);
 
         uniformBuffers[currentImage]->CopyFrom(&ubo, sizeof(ubo));
     }
@@ -221,7 +224,7 @@ private:
                 // Bind the shader descriptor set (aka which resources belong to which shader layout slots)
                 descriptorSets[0]->Bind(commandBuffers[imageIndex], texturedGraphicsPipeline);
 
-                // Bind the Mesh
+                // Bind the VulkanMesh
                 roomMesh->Bind(commandBuffers[imageIndex]);
                 // Main Draw command
                 roomMesh->Draw(commandBuffers[imageIndex]);
@@ -256,7 +259,59 @@ private:
     }
 };
 
+glm::mat4 rotateX(float rad) { return glm::mat4(1, 0, 0, 0, 0, cos(rad), sin(rad), 0, 0, -sin(rad), cos(rad), 0, 0, 0, 0, 1); }
+glm::mat4 rotateY(float rad) { return glm::mat4(cos(rad), 0, -sin(rad), 0, 0, 1, 0, 0, sin(rad), 0, cos(rad), 0, 0, 0, 0, 1); }
+glm::mat4 rotateZ(float rad) { return glm::mat4(cos(rad), -sin(rad), 0, 0, sin(rad), cos(rad), 0, 0, 0, 0, 1, 0, 0, 0, 0, 1); }
+
+void printMatrix(glm::mat4 m) {
+    printf("%.2f %.2f %.2f %.2f\n%.2f %.2f %.2f %.2f\n%.2f %.2f %.2f %.2f\n%.2f %.2f %.2f %.2f\n\n",
+           m[0][0], m[1][0], m[2][0], m[3][0],
+           m[0][1], m[1][1], m[2][1], m[3][1],
+           m[0][2], m[1][2], m[2][2], m[3][2],
+           m[0][3], m[1][3], m[2][3], m[3][3]);
+}
+
+glm::mat4 quatToMat(glm::vec4 q) {
+    return glm::mat4(1 - 2 * q.y * q.y - 2 * q.z * q.z, 2 * q.x * q.y - 2 * q.z * q.w, 2 * q.x * q.z + 2 * q.y * q.w, 0,
+                     2 * q.x * q.y + 2 * q.z * q.w, 1 - 2 * q.x * q.x - 2 * q.z * q.z, 2 * q.y * q.z - 2 * q.x * q.w, 0,
+                     2 * q.x * q.z - 2 * q.y * q.w, 2 * q.y * q.z + 2 * q.x * q.w, 1 - 2 * q.x * q.x - 2 * q.y * q.y, 0,
+                     0, 0, 0, 1);
+}
+
+glm::vec4 angleAxisToQuat(float angle, glm::vec3 axis) {
+    glm::vec4 q;
+    q.x = axis.x * sin(angle / 2);
+    q.y = axis.y * sin(angle / 2);
+    q.z = axis.z * sin(angle / 2);
+    q.w = cos(angle / 2);
+    return q;
+}
+
+const glm::vec3 up(0, 1, 0);
+const glm::vec3 forward_(0, 0, 1);
+
+glm::vec4 lookAt(glm::vec3 eye, glm::vec3 center) {
+    const float CY_FP_EPSILON = 0.00001;
+    const float M_PI = 3.1415926535897932f;
+    const auto &forward = glm::normalize(center - eye);
+    const float dot = glm::dot(forward_, forward);
+
+    if (abs(dot - (-1.0f)) < CY_FP_EPSILON)
+        return glm::vec4(up.x, up.y, up.z, M_PI);
+
+    if (abs(dot - 1.0f) < CY_FP_EPSILON)
+        return glm::vec4(0, 0, 0, 1);
+
+    const float angle = acos(dot);
+    const auto &axis = glm::normalize(glm::cross(forward_, forward));
+
+    return angleAxisToQuat(angle, axis);
+}
+
 int main(int argc, char **argv) {
+
+    auto m1 = glm::lookAt(glm::vec3(1.0f, 2.0f, 3.0f), glm::vec3(4.0f, 5.0f, 6.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+    printMatrix(m1);
 
     bool runApp29 = argc >= 2 && strcmp(argv[1], "-app29") == 0;
 

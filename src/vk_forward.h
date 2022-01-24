@@ -16,5 +16,5 @@ class VulkanBuffer;
 class VulkanDescriptorSet;
 class VulkanTextureSampler;
 
-class Mesh;
+class VulkanMesh;
 class VkValidationClient;

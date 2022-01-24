@@ -21,8 +21,6 @@ public:
 
     SwapChainSupportDetails QuerySwapChainSupport();
 
-    VkInstance InstanceHandle();
-
     VkPhysicalDevice PhysicalDeviceHandle();
 
     VkSurfaceKHR SurfaceHandle();
